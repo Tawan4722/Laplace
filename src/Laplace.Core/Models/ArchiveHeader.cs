@@ -1,0 +1,18 @@
+namespace Laplace.Core.Models;
+
+public sealed class ArchiveHeader
+{
+    public const string Magic = "LPC1";
+    public ushort FormatVersion { get; set; } = 1;
+    public ushort ArchiveFlags { get; set; }
+    public long CreatedUnixMilliseconds { get; set; }
+    public uint CreatorVersion { get; set; } = 0x00010000;
+    public uint DefaultBlockSize { get; set; }
+    public long FileEntryCount { get; set; }
+    public long BlockEntryCount { get; set; }
+    public long FileTableOffset { get; set; }
+    public long BlockTableOffset { get; set; }
+    public long DataSectionOffset { get; set; }
+    public string Comment { get; set; } = string.Empty;
+    public uint HeaderChecksumCrc32C { get; set; }
+}
