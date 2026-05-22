@@ -74,6 +74,7 @@ docs/
 - Windows (primary target)
 - .NET SDK 8.0 or newer
 - Inno Setup 6 (for building installer executable)
+- Windows SDK (for MSIX `makeappx.exe` and `signtool.exe`)
 
 ```powershell
 dotnet restore
@@ -112,6 +113,27 @@ Uninstall behavior:
 
 - removes installed files
 - runs `laplace integrate uninstall` to clean shell integration
+
+## Build MSIX Package
+
+Laplace includes an MSIX build script at [`installer/build-msix.ps1`](installer/build-msix.ps1).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\build-msix.ps1 `
+  -Configuration Release `
+  -Runtime win-x64 `
+  -Version 0.1.0.0 `
+  -PackageName Tawan4722.Laplace `
+  -Publisher "CN=LaplaceDev"
+```
+
+Output:
+
+```text
+artifacts\msix\Laplace_<version>_<runtime>.msix
+```
+
+Full guide: [`docs/MSIX.md`](docs/MSIX.md)
 
 ## CLI Usage
 
