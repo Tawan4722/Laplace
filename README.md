@@ -48,7 +48,7 @@ Planned (next phases):
 
 - Full Windows WPF GUI archive manager
 - Native drag-out extraction UX
-- Installer/uninstaller package (file association/context menu options in installer UI)
+- Installer/uninstaller polish (full-clean, repair, portable profile handling)
 - Repair mode and portable mode
 - Broader compressor backend set and deeper performance tuning
 
@@ -73,6 +73,7 @@ docs/
 
 - Windows (primary target)
 - .NET SDK 8.0 or newer
+- Inno Setup 6 (for building installer executable)
 
 ```powershell
 dotnet restore
@@ -84,6 +85,33 @@ Run tests:
 ```powershell
 dotnet test -c Release
 ```
+
+## Build Setup File (Installer)
+
+Laplace includes an Inno Setup script at [`installer/Laplace.iss`](installer/Laplace.iss) and a build helper at [`installer/build-installer.ps1`](installer/build-installer.ps1).
+
+Generate `LaplaceSetup.exe`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 -Configuration Release -Runtime win-x64 -Version 0.1.0
+```
+
+Installer output:
+
+```text
+artifacts\installer\LaplaceSetup.exe
+```
+
+Installer options:
+
+- desktop shortcut
+- Start Menu shortcut
+- optional `.lpc`/context-menu shell integration
+
+Uninstall behavior:
+
+- removes installed files
+- runs `laplace integrate uninstall` to clean shell integration
 
 ## CLI Usage
 
@@ -244,7 +272,7 @@ dotnet test
 ## Known Limitations
 
 - GUI is not implemented yet in this branch.
-- Installer/uninstaller package is not included yet.
+- Installer is currently CLI-centric (no dedicated GUI app binary yet), and shell integration is per-user (`HKCU`) by design.
 - `LZMA_MAX` method ID is present in format/engine but currently backed by high-compression profile rather than a dedicated LZMA backend implementation.
 - `compress-dialog` CLI verb is currently a placeholder until GUI create-archive dialog exists.
 
@@ -300,5 +328,4 @@ dotnet test
 
 ## License
 
-No license file is currently included in this repository state.  
-Add a `LICENSE` file before publishing production releases.
+This repository is licensed under MIT. See [`LICENSE`](LICENSE).
