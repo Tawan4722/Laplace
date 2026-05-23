@@ -20,14 +20,14 @@ powershell -ExecutionPolicy Bypass -File .\installer\build-msix.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
   -Version 0.1.0.0 `
-  -PackageName Tawan4722.Laplace `
-  -Publisher "CN=LaplaceDev"
+  -PackageName Laplace.Project `
+  -Publisher "CN=LaplaceProject"
 ```
 
 Output:
 
 - `artifacts\msix\Laplace_<version>_<runtime>.msix`
-- `artifacts\msix\cert\LaplaceDev.pfx` (if auto-generated)
+- `artifacts\msix\cert\LaplaceProjectDev.pfx` (if auto-generated)
 
 ## Install Package
 

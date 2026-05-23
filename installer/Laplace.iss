@@ -3,7 +3,7 @@
   #define AppVersion "0.1.0"
 #endif
 #define AppPublisher "Laplace Project"
-#define AppURL "https://github.com/Tawan4722/Laplace"
+#define AppURL "https://github.com/LaplaceProject/Laplace"
 #define AppExeName "laplace.exe"
 #define AppId "{{F0EF4E86-D377-46E9-983A-50A83D5E6E52}"
 

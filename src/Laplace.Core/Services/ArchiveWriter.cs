@@ -86,9 +86,8 @@ public sealed class ArchiveWriter
                     break;
                 }
 
-                var blockData = buffer.AsSpan(0, bytesRead);
-                incrementalHash.AppendData(blockData);
-                var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options.Mode, blockData);
+                incrementalHash.AppendData(buffer, 0, bytesRead);
+                var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options.Mode, buffer, bytesRead);
                 var blockOffset = archiveStream.Position;
                 await archiveStream.WriteAsync(outputBytes, cancellationToken).ConfigureAwait(false);
 
@@ -189,8 +188,10 @@ public sealed class ArchiveWriter
     private (CompressionMethod Method, byte[] Bytes, bool IsRaw) SelectAndCompressBlock(
         string relativePath,
         CompressionMode mode,
-        ReadOnlySpan<byte> blockData)
+        byte[] blockBuffer,
+        int blockLength)
     {
+        var blockData = blockBuffer.AsSpan(0, blockLength);
         if (blockData.Length == 0)
         {
             return (CompressionMethod.Raw, [], true);

@@ -1,139 +1,75 @@
 # Laplace
 
-Laplace is a Windows-first archive and compression project centered around a custom archive container format: **`.lpc`**.
+Laplace is a Windows-first archive and compression project built around a custom archive format: **`.lpc`**.
 
-- Project identity: `Laplace`
+- Project: `Laplace`
 - Archive extension: `.lpc`
 - Magic header: `LPC1`
-- Primary stack: .NET 8+ (C#)
+- Runtime: .NET 8+
 
-Laplace is designed as a serious engineering project, not a shell wrapper around 7-Zip/WinRAR/OS archive commands.  
-Compression and extraction are implemented in code with a shared backend architecture.
+Laplace is implemented in C# end-to-end. It is not a thin wrapper around 7-Zip, WinRAR, or OS shell archive commands.
 
-## Status
+## Highlights
 
-Current repository state is a strong backend/CLI baseline with documented archive format and core safety checks.
-
-Implemented now:
-
-- Custom `.lpc` binary container (header + file table + block table + data section)
-- Archive writer/reader with streaming block processing
-- Per-block compression method metadata
-- Adaptive compression decision engine (file type + entropy + repetition + sampled scoring)
-- Compression methods wired in code:
+- Custom `.lpc` container with documented binary layout
+- Streaming archive writer/reader architecture
+- Per-block compression metadata and checksums
+- Adaptive compression engine (file type + entropy + sample scoring)
+- Compression methods:
   - `RAW`
   - `LZ4_FAST`
   - `ZSTD_FAST`
   - `ZSTD_BALANCED`
   - `ZSTD_HIGH`
   - `DEFLATE_FALLBACK`
-  - `LZMA_MAX` method ID preserved (currently mapped to high-compression backend profile)
-- Integrity:
-  - header checksum
-  - per-block CRC32C
-  - per-file SHA-256
-- Safe extraction path validation against traversal/absolute paths
+  - `LZMA_MAX` method ID reserved (currently mapped to high-compression profile)
+- Integrity and validation:
+  - Header checksum
+  - Per-block CRC32C
+  - Per-file SHA-256
+  - Safe extraction path validation
 - CLI commands:
-  - `compress`
-  - `extract`
-  - `list`
-  - `info`
-  - `test`
-  - `benchmark`
-  - shell helpers (`open`, `extract-here`, `extract-to-folder`, `extract-to-named-folder`)
-- Per-user Windows shell integration manager through CLI (`integrate install|status|uninstall`)
-- Unit/integration tests for round-trip, security, corruption detection, and multi-input behavior
+  - `compress`, `extract`, `list`, `info`, `test`, `benchmark`
+  - Shell helpers (`open`, `extract-here`, `extract-to-folder`, `extract-to-named-folder`)
+- Per-user Windows shell integration manager (`integrate install|status|uninstall`)
 
-Planned (next phases):
+## Quick Start
 
-- Full Windows WPF GUI archive manager
-- Native drag-out extraction UX
-- Installer/uninstaller polish (full-clean, repair, portable profile handling)
-- Repair mode and portable mode
-- Broader compressor backend set and deeper performance tuning
+### Prerequisites
 
-## Repository Layout
+- Windows
+- .NET SDK 8.0+
 
-```text
-Laplace.sln
-src/
-  Laplace.Core/              # archive format, reader/writer, extractor, validator, adaptive logic
-  Laplace.Compression/       # compressor implementations and registry
-  Laplace.Cli/               # command-line app
-  Laplace.ShellIntegration/  # Windows HKCU file association/context verb registration
-tests/
-  Laplace.Tests/             # unit and integration tests
-docs/
-  LPC_FORMAT.md
-  ADAPTIVE_COMPRESSION.md
-  SHELL_INTEGRATION.md
-```
+Optional for packaging:
 
-## Build Requirements
+- Inno Setup 6 (for `.exe` installer)
+- Windows SDK (`makeappx.exe`, `signtool.exe`) for MSIX
 
-- Windows (primary target)
-- .NET SDK 8.0 or newer
-- Inno Setup 6 (for building installer executable)
-- Windows SDK (for MSIX `makeappx.exe` and `signtool.exe`)
+### One-command setup
 
 ```powershell
-dotnet restore
-dotnet build -c Release
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-Run tests:
+Or from Command Prompt:
+
+```bat
+setup.cmd
+```
+
+`setup.ps1` will:
+
+- Validate `.NET SDK` version
+- Run `dotnet restore`
+- Run `dotnet build`
+- Run `dotnet test`
+- Report optional installer/MSIX tool availability
+
+Optional flags:
 
 ```powershell
-dotnet test -c Release
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Configuration Debug -SkipTests
 ```
-
-## Build Setup File (Installer)
-
-Laplace includes an Inno Setup script at [`installer/Laplace.iss`](installer/Laplace.iss) and a build helper at [`installer/build-installer.ps1`](installer/build-installer.ps1).
-
-Generate `LaplaceSetup.exe`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 -Configuration Release -Runtime win-x64 -Version 0.1.0
-```
-
-Installer output:
-
-```text
-artifacts\installer\LaplaceSetup.exe
-```
-
-Installer options:
-
-- desktop shortcut
-- Start Menu shortcut
-- optional `.lpc`/context-menu shell integration
-
-Uninstall behavior:
-
-- removes installed files
-- runs `laplace integrate uninstall` to clean shell integration
-
-## Build MSIX Package
-
-Laplace includes an MSIX build script at [`installer/build-msix.ps1`](installer/build-msix.ps1).
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\installer\build-msix.ps1 `
-  -Configuration Release `
-  -Runtime win-x64 `
-  -Version 0.1.0.0 `
-  -PackageName Tawan4722.Laplace `
-  -Publisher "CN=LaplaceDev"
-```
-
-Output:
-
-```text
-artifacts\msix\Laplace_<version>_<runtime>.msix
-```
-
-Full guide: [`docs/MSIX.md`](docs/MSIX.md)
 
 ## CLI Usage
 
@@ -164,21 +100,11 @@ dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- compress .\src .\do
 dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- extract .\build.lpc .\out --overwrite
 ```
 
-### List
+### List / Info / Test
 
 ```powershell
 dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- list .\build.lpc
-```
-
-### Info
-
-```powershell
 dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- info .\build.lpc
-```
-
-### Test Integrity
-
-```powershell
 dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- test .\build.lpc
 ```
 
@@ -188,7 +114,7 @@ dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- test .\build.lpc
 dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- benchmark .\folder
 ```
 
-### Shell Helper Commands
+### Shell helpers
 
 ```powershell
 dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- open .\build.lpc
@@ -197,157 +123,94 @@ dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- extract-to-named-fo
 dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- extract-to-folder .\build.lpc .\any-destination
 ```
 
-## `.lpc` Format Summary
+## Packaging
 
-Detailed specification: [`docs/LPC_FORMAT.md`](docs/LPC_FORMAT.md)
-
-High-level structure:
-
-1. Global header (`LPC1`, version, offsets, counts, metadata)
-2. Data section (sequential block payloads, compressed or raw)
-3. File entry table (path, timestamps, sizes, checksums, block references)
-4. Block table (method, level, offsets, per-block checksum, flags)
-
-Design principles:
-
-- 64-bit offsets/sizes for large-file support
-- list/archive metadata readable without full decompression
-- per-block method and checksum for robust validation
-- forward-compatible method IDs and version field
-
-## Adaptive Compression Strategy
-
-Detailed behavior: [`docs/ADAPTIVE_COMPRESSION.md`](docs/ADAPTIVE_COMPRESSION.md)
-
-Current adaptive engine evaluates:
-
-- extension and signature hints
-- file category classification
-- entropy estimate
-- repetition ratio
-- compressibility estimate
-- user-selected mode
-
-Selection flow:
-
-1. Analyze sampled bytes
-2. Build candidate method list by mode/content
-3. Trial-compress sample with candidates
-4. Score by ratio/speed/memory/file-type affinity
-5. Use best candidate for block compression
-6. Enforce RAW fallback whenever compressed block is not smaller
-
-This guarantees no blind expansion of incompressible data.
-
-## Security and Integrity
-
-Laplace explicitly validates malicious/malformed archive conditions:
-
-- path traversal detection (`..\`, `../`, rooted paths)
-- extraction bounded to selected destination root
-- header checksum verification
-- offset/size bounds validation
-- block CRC32C verification before decompression
-- decompressed size checks against recorded block size
-- file SHA-256 validation after reconstruction
-
-Failure behavior:
-
-- reject invalid archive structures safely
-- return clear errors instead of undefined behavior
-- do not execute extracted files automatically
-
-## Shell Integration (Current)
-
-Detailed guide: [`docs/SHELL_INTEGRATION.md`](docs/SHELL_INTEGRATION.md)
-
-Per-user registration commands:
+### EXE installer (Inno Setup)
 
 ```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- integrate install
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- integrate status
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- integrate uninstall
+powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 -Configuration Release -Runtime win-x64 -Version 0.1.0
 ```
 
-Scope:
+Output:
 
-- `HKCU\Software\Classes` only (no admin required)
-- cleanly removable
+- `artifacts\installer\LaplaceSetup.exe`
 
-## Testing
-
-Current tests cover:
-
-- file compression/extraction round-trip
-- many tiny files handling
-- multi-input compression
-- path traversal/absolute path extraction rejection
-- corruption detection during archive test flow
-- RAW fallback behavior on incompressible-like data
-
-Run:
+### MSIX package
 
 ```powershell
-dotnet test
+powershell -ExecutionPolicy Bypass -File .\installer\build-msix.ps1 `
+  -Configuration Release `
+  -Runtime win-x64 `
+  -Version 0.1.0.0 `
+  -PackageName Laplace.Project `
+  -Publisher "CN=LaplaceProject"
 ```
 
-## Known Limitations
+Output:
 
-- GUI is not implemented yet in this branch.
-- Installer is currently CLI-centric (no dedicated GUI app binary yet), and shell integration is per-user (`HKCU`) by design.
-- `LZMA_MAX` method ID is present in format/engine but currently backed by high-compression profile rather than a dedicated LZMA backend implementation.
-- `compress-dialog` CLI verb is currently a placeholder until GUI create-archive dialog exists.
+- `artifacts\msix\Laplace_<version>_<runtime>.msix`
+
+For full MSIX details, see `docs/MSIX.md`.
+
+## Format and Safety
+
+- Detailed `.lpc` format specification: `docs/LPC_FORMAT.md`
+- Adaptive compression behavior: `docs/ADAPTIVE_COMPRESSION.md`
+- Shell integration design and operations: `docs/SHELL_INTEGRATION.md`
+
+Security and integrity checks include:
+
+- Path traversal and absolute-path extraction rejection
+- Header checksum verification
+- Offset/size bounds validation
+- Block CRC32C verification before decompression
+- Decompressed-size checks for each block
+- SHA-256 verification for extracted files
+
+## Repository Layout
+
+```text
+Laplace.sln
+src/
+  Laplace.Core/              # archive format, reader/writer, extractor, validator, adaptive logic
+  Laplace.Compression/       # compressor implementations and registry
+  Laplace.Cli/               # command-line app
+  Laplace.ShellIntegration/  # Windows HKCU file association/context verb registration
+tests/
+  Laplace.Tests/             # unit and integration tests
+docs/
+  LPC_FORMAT.md
+  ADAPTIVE_COMPRESSION.md
+  SHELL_INTEGRATION.md
+  MSIX.md
+installer/
+  build-installer.ps1
+  build-msix.ps1
+  Laplace.iss
+```
+
+## Development
+
+Build manually:
+
+```powershell
+dotnet restore
+dotnet build -c Release
+```
+
+Run tests:
+
+```powershell
+dotnet test -c Release
+```
 
 ## Roadmap
 
-### Phase 2
-
-- Expand compressor backends and tuning depth
-- Multithreaded block pipeline improvements
-- Solid block grouping for many-small-files optimization
-- richer benchmarking output and reporting artifact
-
-### Phase 3
-
-- WPF GUI (`Laplace.GUI`)
-- archive browsing, sorting, search, selected extraction, archive info UI
-- responsive progress and cancel UX
-
-### Phase 4
-
-- drag-out extraction UX
-- recent archives and settings pages
-
-### Phase 5
-
-- deeper shell integration polish
-- integration diagnostics/repair actions
-
-### Phase 6
-
-- installer/uninstaller (Windows Apps integration)
-- clean uninstall/full-clean options
-- optional portable mode behavior
-
-### Phase 7
-
-- expanded test matrix
-- docs polish
-- release hardening and performance profiling
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Implement changes with tests
-4. Run:
-   - `dotnet build`
-   - `dotnet test`
-5. Open a pull request with:
-   - behavior summary
-   - test evidence
-   - backward-compatibility notes for `.lpc` format (if applicable)
+- Expand compression backend tuning and performance pipeline
+- Improve many-small-files and solid-block behavior
+- Implement WPF GUI archive manager
+- Improve installer/uninstaller diagnostics and repair flow
 
 ## License
 
-This repository is licensed under MIT. See [`LICENSE`](LICENSE).
+MIT. See `LICENSE`.

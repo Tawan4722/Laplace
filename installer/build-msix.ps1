@@ -2,11 +2,11 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$Version = "0.1.0.0",
-    [string]$PackageName = "Tawan4722.Laplace",
+    [string]$PackageName = "Laplace.Project",
     [string]$DisplayName = "Laplace",
     [string]$PublisherDisplayName = "Laplace Project",
     [string]$Description = "Laplace archive and compression tool",
-    [string]$Publisher = "CN=LaplaceDev",
+    [string]$Publisher = "CN=LaplaceProject",
     [string]$PfxPath = "",
     [string]$PfxPassword = "laplace-dev",
     [switch]$SelfContained,
@@ -14,6 +14,25 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-Dotnet() {
+    $dotnetCandidates = @()
+    $dotnetCmd = Get-Command "dotnet" -ErrorAction SilentlyContinue
+    if ($dotnetCmd) {
+        $dotnetCandidates += $dotnetCmd.Source
+    }
+    if ($env:DOTNET_ROOT) {
+        $dotnetCandidates += (Join-Path $env:DOTNET_ROOT "dotnet.exe")
+    }
+    $dotnetCandidates += (Join-Path $env:USERPROFILE "dotnet\dotnet.exe")
+    $dotnetCandidates = @($dotnetCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique)
+
+    if ($dotnetCandidates.Count -eq 0) {
+        throw "dotnet was not found. Install .NET SDK 8.0+ from https://dotnet.microsoft.com/download."
+    }
+
+    return $dotnetCandidates[0]
+}
 
 function Find-Tool([string]$toolName) {
     $sdkRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
@@ -81,12 +100,13 @@ $manifestTemplatePath = Join-Path $PSScriptRoot "msix\AppxManifest.template.xml"
 $manifestOutPath = Join-Path $stageDir "AppxManifest.xml"
 $packagePath = Join-Path $msixRoot "Laplace_$Version`_$Runtime.msix"
 $certDir = Join-Path $msixRoot "cert"
+$dotnet = Resolve-Dotnet
 
 Ensure-Dir $msixRoot
 Ensure-Dir $certDir
 
 if ([string]::IsNullOrWhiteSpace($PfxPath)) {
-    $PfxPath = Join-Path $certDir "LaplaceDev.pfx"
+    $PfxPath = Join-Path $certDir "LaplaceProjectDev.pfx"
 }
 
 $makeAppx = Find-Tool "makeappx.exe"
@@ -98,7 +118,7 @@ Write-Host "==> Publishing Laplace CLI for MSIX staging..."
 if (Test-Path $publishDir) { Remove-Item -LiteralPath $publishDir -Recurse -Force }
 $selfContainedValue = if ($SelfContained) { "true" } else { "false" }
 
-dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
+& $dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
     -c $Configuration `
     -r $Runtime `
     --self-contained $selfContainedValue `

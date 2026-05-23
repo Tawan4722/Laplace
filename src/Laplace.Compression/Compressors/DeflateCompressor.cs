@@ -24,7 +24,7 @@ public sealed class DeflateCompressor : IBlockCompressor
     public byte[] Decompress(ReadOnlySpan<byte> data, int expectedDecompressedSize)
     {
         using var input = new MemoryStream(data.ToArray(), writable: false);
-        using var deflate = new DeflateStream(input, CompressionMode.Decompress, leaveOpen: true);
+        using var deflate = new DeflateStream(input, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true);
         using var output = expectedDecompressedSize > 0
             ? new MemoryStream(expectedDecompressedSize)
             : new MemoryStream();

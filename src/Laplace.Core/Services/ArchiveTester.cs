@@ -1,5 +1,6 @@
 using Laplace.Core.Abstractions;
 using Laplace.Core.Enums;
+using Laplace.Core.Models;
 using System.Security.Cryptography;
 
 namespace Laplace.Core.Services;
