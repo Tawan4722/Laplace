@@ -459,6 +459,12 @@ internal static class Program
             return 1;
         }
 
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.Error.WriteLine("Shell integration is only supported on Windows.");
+            return 1;
+        }
+
         var manager = new ShellIntegrationManager();
         var action = args[0].ToLowerInvariant();
         if (action == "status")

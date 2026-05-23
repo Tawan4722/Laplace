@@ -1,7 +1,9 @@
 using Microsoft.Win32;
+using System.Runtime.Versioning;
 
 namespace Laplace.ShellIntegration;
 
+[SupportedOSPlatform("windows")]
 public sealed class ShellIntegrationManager
 {
     private const string ClassesRoot = @"Software\Classes";

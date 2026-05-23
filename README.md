@@ -152,6 +152,23 @@ Output:
 
 For full MSIX details, see `docs/MSIX.md`.
 
+## Release Process
+
+Release artifacts are built by GitHub Actions when a version tag is pushed.
+
+```powershell
+git tag -a v0.1.1 -m "Laplace v0.1.1"
+git push origin v0.1.1
+```
+
+The release workflow publishes:
+
+- `LaplaceSetup.exe`
+- `Laplace_<version>_win-x64.msix`
+- `SHA256SUMS.txt`
+
+The project also runs CI on every push to `main` and every pull request.
+
 ## Format and Safety
 
 - Detailed `.lpc` format specification: `docs/LPC_FORMAT.md`
@@ -187,6 +204,9 @@ installer/
   build-installer.ps1
   build-msix.ps1
   Laplace.iss
+.github/workflows/
+  ci.yml
+  release.yml
 ```
 
 ## Development
@@ -203,6 +223,8 @@ Run tests:
 ```powershell
 dotnet test -c Release
 ```
+
+The repository includes `global.json` to keep local and CI builds on the same .NET SDK feature band.
 
 ## Roadmap
 
