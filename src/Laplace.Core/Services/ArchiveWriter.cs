@@ -44,105 +44,131 @@ public sealed class ArchiveWriter
             DefaultBlockSize = (uint)options.BlockSizeBytes,
             Comment = options.Comment
         };
-
-        var fileEntries = new List<FileEntryRecord>(sorted.Count);
-        var blockEntries = new List<BlockEntryRecord>();
-        var directoryIds = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        var totalBytes = sorted.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
-        long processedBytes = 0;
-
-        await using var archiveStream = new FileStream(outputArchivePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 20, useAsync: true);
-        header.DataSectionOffset = ArchiveFormatCodec.WriteHeader(archiveStream, header);
-
-        foreach (var sourceEntry in sorted)
+        var encryptionKey = Array.Empty<byte>();
+        if (options.Password is not null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var entryId = fileEntries.Count;
-            var parentRelative = GetParentRelative(sourceEntry.RelativePath);
-            var parentFolderId = string.IsNullOrWhiteSpace(parentRelative) ? -1 : directoryIds[parentRelative];
-
-            var fileEntry = BuildFileEntrySkeleton(sourceEntry, entryId, parentFolderId);
-
-            if (sourceEntry.IsDirectory)
-            {
-                directoryIds[sourceEntry.RelativePath] = entryId;
-                fileEntries.Add(fileEntry);
-                continue;
-            }
-
-            fileEntry.FirstBlockIndex = blockEntries.Count;
-            using var fs = new FileStream(sourceEntry.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, options.BlockSizeBytes, useAsync: true);
-            using var incrementalHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var methodsUsed = new HashSet<CompressionMethod>();
-            var buffer = new byte[options.BlockSizeBytes];
-
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var bytesRead = await fs.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
-                if (bytesRead == 0)
-                {
-                    break;
-                }
-
-                incrementalHash.AppendData(buffer, 0, bytesRead);
-                var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options.Mode, buffer, bytesRead);
-                var blockOffset = archiveStream.Position;
-                await archiveStream.WriteAsync(outputBytes, cancellationToken).ConfigureAwait(false);
-
-                var compressor = _compressorRegistry.GetCompressor(outputMethod);
-                methodsUsed.Add(outputMethod);
-                blockEntries.Add(new BlockEntryRecord
-                {
-                    BlockId = blockEntries.Count,
-                    OwningFileEntryId = fileEntry.EntryId,
-                    OriginalBlockSize = bytesRead,
-                    CompressedBlockSize = outputBytes.Length,
-                    CompressionMethod = outputMethod,
-                    CompressionLevel = compressor.Level,
-                    DataOffset = blockOffset,
-                    BlockChecksumCrc32C = ChecksumService.ComputeCrc32C(outputBytes),
-                    Flags = isRaw ? 1u : 0u,
-                    IsRaw = isRaw
-                });
-
-                fileEntry.CompressedSize += outputBytes.Length;
-                fileEntry.OriginalSize += bytesRead;
-                fileEntry.BlockCount++;
-                processedBytes += bytesRead;
-
-                progress?.Report(new ArchiveOperationProgress
-                {
-                    CurrentItem = sourceEntry.RelativePath,
-                    ProcessedBytes = processedBytes,
-                    TotalBytes = totalBytes,
-                    Percent = totalBytes == 0 ? 100 : (double)processedBytes / totalBytes * 100d
-                });
-            }
-
-            fileEntry.FileChecksum = incrementalHash.GetHashAndReset();
-            fileEntry.CompressionSummary = string.Join(",", methodsUsed.OrderBy(x => (int)x));
-            fileEntries.Add(fileEntry);
+            header.FormatVersion = 2;
+            header.ArchiveFlags |= ArchiveHeader.EncryptionFlag;
+            header.EncryptionAlgorithmId = ArchiveHeader.EncryptionAlgorithmAes256Gcm;
+            header.KeyDerivationIterations = options.KeyDerivationIterations;
+            header.EncryptionSalt = ArchiveEncryption.CreateSalt();
+            encryptionKey = ArchiveEncryption.DeriveKey(options.Password, header.EncryptionSalt, header.KeyDerivationIterations);
         }
 
-        header.FileEntryCount = fileEntries.Count;
-        header.BlockEntryCount = blockEntries.Count;
-        header.FileTableOffset = archiveStream.Position;
-        ArchiveFormatCodec.WriteFileEntries(archiveStream, fileEntries);
-        header.BlockTableOffset = archiveStream.Position;
-        ArchiveFormatCodec.WriteBlockEntries(archiveStream, blockEntries);
-
-        archiveStream.Position = 0;
-        ArchiveFormatCodec.WriteHeader(archiveStream, header);
-        await archiveStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-
-        return new ArchiveDocument
+        try
         {
-            Header = header,
-            FileEntries = fileEntries,
-            BlockEntries = blockEntries
-        };
+            var fileEntries = new List<FileEntryRecord>(sorted.Count);
+            var blockEntries = new List<BlockEntryRecord>();
+            var directoryIds = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            var totalBytes = sorted.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
+            long processedBytes = 0;
+
+            await using var archiveStream = new FileStream(outputArchivePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 20, useAsync: true);
+            header.DataSectionOffset = ArchiveFormatCodec.WriteHeader(archiveStream, header);
+
+            foreach (var sourceEntry in sorted)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var entryId = fileEntries.Count;
+                var parentRelative = GetParentRelative(sourceEntry.RelativePath);
+                var parentFolderId = string.IsNullOrWhiteSpace(parentRelative) ? -1 : directoryIds[parentRelative];
+
+                var fileEntry = BuildFileEntrySkeleton(sourceEntry, entryId, parentFolderId);
+
+                if (sourceEntry.IsDirectory)
+                {
+                    directoryIds[sourceEntry.RelativePath] = entryId;
+                    fileEntries.Add(fileEntry);
+                    continue;
+                }
+
+                fileEntry.FirstBlockIndex = blockEntries.Count;
+                using var fs = new FileStream(sourceEntry.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, options.BlockSizeBytes, useAsync: true);
+                using var incrementalHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var methodsUsed = new HashSet<CompressionMethod>();
+                var buffer = new byte[options.BlockSizeBytes];
+
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var bytesRead = await fs.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
+                    if (bytesRead == 0)
+                    {
+                        break;
+                    }
+
+                    incrementalHash.AppendData(buffer, 0, bytesRead);
+                    var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options.Mode, buffer, bytesRead);
+                    var compressor = _compressorRegistry.GetCompressor(outputMethod);
+                    methodsUsed.Add(outputMethod);
+
+                    var block = new BlockEntryRecord
+                    {
+                        BlockId = blockEntries.Count,
+                        OwningFileEntryId = fileEntry.EntryId,
+                        OriginalBlockSize = bytesRead,
+                        CompressedBlockSize = outputBytes.Length,
+                        CompressionMethod = outputMethod,
+                        CompressionLevel = compressor.Level,
+                        Flags = isRaw ? 1u : 0u,
+                        IsRaw = isRaw
+                    };
+
+                    if (header.IsEncrypted)
+                    {
+                        outputBytes = ArchiveEncryption.EncryptBlock(outputBytes, encryptionKey, block);
+                    }
+
+                    block.DataOffset = archiveStream.Position;
+                    block.BlockChecksumCrc32C = ChecksumService.ComputeCrc32C(outputBytes);
+                    await archiveStream.WriteAsync(outputBytes, cancellationToken).ConfigureAwait(false);
+                    blockEntries.Add(block);
+
+                    fileEntry.CompressedSize += outputBytes.Length;
+                    fileEntry.OriginalSize += bytesRead;
+                    fileEntry.BlockCount++;
+                    processedBytes += bytesRead;
+
+                    progress?.Report(new ArchiveOperationProgress
+                    {
+                        CurrentItem = sourceEntry.RelativePath,
+                        ProcessedBytes = processedBytes,
+                        TotalBytes = totalBytes,
+                        Percent = totalBytes == 0 ? 100 : (double)processedBytes / totalBytes * 100d
+                    });
+                }
+
+                fileEntry.FileChecksum = incrementalHash.GetHashAndReset();
+                fileEntry.CompressionSummary = string.Join(",", methodsUsed.OrderBy(x => (int)x));
+                fileEntries.Add(fileEntry);
+            }
+
+            header.FileEntryCount = fileEntries.Count;
+            header.BlockEntryCount = blockEntries.Count;
+            header.FileTableOffset = archiveStream.Position;
+            ArchiveFormatCodec.WriteFileEntries(archiveStream, fileEntries);
+            header.BlockTableOffset = archiveStream.Position;
+            ArchiveFormatCodec.WriteBlockEntries(archiveStream, blockEntries, header.FormatVersion);
+
+            archiveStream.Position = 0;
+            ArchiveFormatCodec.WriteHeader(archiveStream, header);
+            await archiveStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+            return new ArchiveDocument
+            {
+                Header = header,
+                FileEntries = fileEntries,
+                BlockEntries = blockEntries
+            };
+        }
+        finally
+        {
+            if (encryptionKey.Length > 0)
+            {
+                CryptographicOperations.ZeroMemory(encryptionKey);
+            }
+        }
     }
 
     private static FileEntryRecord BuildFileEntrySkeleton(InputEntry sourceEntry, int entryId, long parentFolderId)

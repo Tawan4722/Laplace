@@ -8,7 +8,7 @@ public static class ArchiveValidator
 {
     public static void ValidateHeader(ArchiveHeader header, long archiveLength)
     {
-        if (header.FormatVersion != 1)
+        if (header.FormatVersion is not (1 or 2))
         {
             throw new LaplaceArchiveException($"Unsupported LPC format version: {header.FormatVersion}");
         }
@@ -42,9 +42,27 @@ public static class ArchiveValidator
         {
             throw new LaplaceArchiveException("Negative table counts are invalid.");
         }
+
+        if (header.IsEncrypted)
+        {
+            if (header.FormatVersion < 2)
+            {
+                throw new LaplaceArchiveException("Encrypted archives require LPC format version 2.");
+            }
+
+            if (header.EncryptionAlgorithmId != ArchiveHeader.EncryptionAlgorithmAes256Gcm)
+            {
+                throw new LaplaceArchiveException($"Unsupported LPC encryption algorithm: {header.EncryptionAlgorithmId}");
+            }
+
+            if (header.EncryptionSalt.Length < ArchiveEncryption.SaltSizeBytes || header.KeyDerivationIterations <= 0)
+            {
+                throw new LaplaceArchiveException("Invalid LPC encryption metadata.");
+            }
+        }
     }
 
-    public static void ValidateBlockEntries(IEnumerable<BlockEntryRecord> blocks, long archiveLength)
+    public static void ValidateBlockEntries(IEnumerable<BlockEntryRecord> blocks, long archiveLength, ArchiveHeader? header = null)
     {
         foreach (var block in blocks)
         {
@@ -62,6 +80,13 @@ public static class ArchiveValidator
             if (end > archiveLength)
             {
                 throw new LaplaceArchiveException($"Block #{block.BlockId} extends beyond archive end.");
+            }
+
+            if (header?.IsEncrypted == true &&
+                (block.EncryptionNonce.Length != ArchiveEncryption.NonceSizeBytes ||
+                 block.EncryptionTag.Length != ArchiveEncryption.TagSizeBytes))
+            {
+                throw new LaplaceArchiveException($"Invalid encryption metadata for block #{block.BlockId}.");
             }
         }
     }

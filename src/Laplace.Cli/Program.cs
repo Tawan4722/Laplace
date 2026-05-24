@@ -1,5 +1,7 @@
 using Laplace.Compression;
+using Laplace.Core.Abstractions;
 using Laplace.Core.Enums;
+using Laplace.Core.Exceptions;
 using Laplace.Core.Models;
 using Laplace.Core.Services;
 using Laplace.ShellIntegration;
@@ -9,6 +11,7 @@ namespace Laplace.Cli;
 
 internal static class Program
 {
+    [STAThread]
     public static async Task<int> Main(string[] args)
     {
         if (args.Length == 0)
@@ -21,7 +24,7 @@ internal static class Program
         var writer = new ArchiveWriter(registry);
         var reader = new ArchiveReader();
         var extractor = new ArchiveExtractor(registry, reader);
-        var tester = new ArchiveTester(registry, reader);
+        var archives = new UniversalArchiveService(registry);
 
         try
         {
@@ -29,16 +32,16 @@ internal static class Program
             var remaining = args.Skip(1).ToArray();
             return command switch
             {
-                "compress" => await CompressAsync(writer, remaining).ConfigureAwait(false),
-                "extract" => await ExtractAsync(extractor, remaining).ConfigureAwait(false),
-                "list" => List(reader, remaining),
-                "info" => Info(reader, remaining),
-                "test" => await TestAsync(tester, remaining).ConfigureAwait(false),
+                "compress" => await CompressAsync(archives, remaining).ConfigureAwait(false),
+                "extract" => await ExtractAsync(archives, remaining).ConfigureAwait(false),
+                "list" => await ListAsync(archives, remaining).ConfigureAwait(false),
+                "info" => await InfoAsync(archives, remaining).ConfigureAwait(false),
+                "test" => await TestAsync(archives, remaining).ConfigureAwait(false),
                 "benchmark" => await BenchmarkAsync(writer, extractor, reader, remaining).ConfigureAwait(false),
                 "open" => OpenCommand(remaining),
-                "extract-here" => await ExtractHereAsync(extractor, remaining).ConfigureAwait(false),
-                "extract-to-folder" => await ExtractToFolderAsync(extractor, remaining).ConfigureAwait(false),
-                "extract-to-named-folder" => await ExtractToNamedFolderAsync(extractor, remaining).ConfigureAwait(false),
+                "extract-here" => await ExtractHereAsync(archives, remaining).ConfigureAwait(false),
+                "extract-to-folder" => await ExtractToFolderAsync(archives, remaining).ConfigureAwait(false),
+                "extract-to-named-folder" => await ExtractToNamedFolderAsync(archives, remaining).ConfigureAwait(false),
                 "compress-dialog" => CompressDialogCommand(remaining),
                 "integrate" => IntegrateCommand(remaining),
                 _ => UnknownCommand(command)
@@ -51,7 +54,7 @@ internal static class Program
         }
     }
 
-    private static async Task<int> CompressAsync(ArchiveWriter writer, string[] args)
+    private static async Task<int> CompressAsync(UniversalArchiveService archives, string[] args)
     {
         var positional = new List<string>();
         var optionStart = args.Length;
@@ -68,57 +71,77 @@ internal static class Program
 
         if (positional.Count < 2)
         {
-            Console.Error.WriteLine("Usage: laplace compress <input_path...> <output.lpc> [options]");
+            Console.Error.WriteLine("Usage: laplace compress <input_path...> <output.lpc|output.zip> [options] [--encrypt|--password <value>|--password-file <path>]");
             return 1;
         }
 
         var outputPath = positional[^1];
         var inputPaths = positional.Take(positional.Count - 1).ToArray();
-        var options = ParseCreateOptions(args.Skip(optionStart).ToArray());
+        var optionArgs = args.Skip(optionStart).ToArray();
+        var options = ParseCreateOptions(optionArgs);
+        var passwordOptions = ParsePasswordOptions(optionArgs);
+        if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
+        {
+            options.Password = await ResolvePasswordAsync(
+                passwordOptions,
+                new PasswordRequest(outputPath, "Create archive", IsWrite: true),
+                requirePassword: true).ConfigureAwait(false);
+        }
+
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine($"Compressing {inputPaths.Length} input path(s) -> '{outputPath}'");
 
-        var archive = await writer.CreateAsync(inputPaths, outputPath, options, ProgressToConsole()).ConfigureAwait(false);
+        await archives.CompressAsync(inputPaths, outputPath, options, ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
-        var info = ArchiveInfoBuilder.Build(archive);
+        var info = archives.Info(outputPath, options.Password);
         Console.WriteLine();
         Console.WriteLine("Compression completed.");
         PrintSizeStats(info.OriginalSize, info.CompressedSize, stopwatch.Elapsed);
 
         if (options.VerifyAfterCompression)
         {
-            var tester = new ArchiveTester(new CompressorRegistry());
-            var testResult = await tester.TestAsync(outputPath).ConfigureAwait(false);
+            var testResult = await archives.TestAsync(outputPath, options.Password).ConfigureAwait(false);
             Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
         }
 
         return 0;
     }
 
-    private static async Task<int> ExtractAsync(ArchiveExtractor extractor, string[] args)
+    private static async Task<int> ExtractAsync(UniversalArchiveService archives, string[] args)
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace extract <input.lpc> <output_folder> [--overwrite]");
+            Console.Error.WriteLine("Usage: laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
             return 1;
         }
 
         var inputArchive = args[0];
         var outputFolder = args[1];
         var overwrite = args.Any(x => x.Equals("--overwrite", StringComparison.OrdinalIgnoreCase));
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(inputArchive, "Extract archive", IsWrite: false),
+            requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine($"Extracting '{inputArchive}' -> '{outputFolder}'");
 
-        await extractor.ExtractAsync(
+        await RunWithPasswordRetryAsync(
             inputArchive,
-            outputFolder,
-            new ExtractArchiveOptions
-            {
-                Overwrite = overwrite,
-                VerifyChecksums = true
-            },
-            ProgressToConsole()).ConfigureAwait(false);
+            "Extract archive",
+            passwordOptions,
+            password,
+            async resolvedPassword => await archives.ExtractAsync(
+                inputArchive,
+                outputFolder,
+                new ExtractArchiveOptions
+                {
+                    Overwrite = overwrite,
+                    VerifyChecksums = true,
+                    Password = resolvedPassword
+                },
+                ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
 
         stopwatch.Stop();
         Console.WriteLine();
@@ -126,68 +149,97 @@ internal static class Program
         return 0;
     }
 
-    private static int List(ArchiveReader reader, string[] args)
+    private static async Task<int> ListAsync(UniversalArchiveService archives, string[] args)
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace list <input.lpc>");
+            Console.Error.WriteLine("Usage: laplace list <input_archive> [--password <value>|--password-file <path>]");
             return 1;
         }
 
-        var archive = reader.Read(args[0]);
-        Console.WriteLine($"Archive: {args[0]}");
-        Console.WriteLine("ID\tType\tOriginal\tCompressed\tMethod\tPath");
-        var blockLookup = ArchiveReader.BuildBlockLookup(archive);
+        var inputArchive = args[0];
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(inputArchive, "List archive", IsWrite: false),
+            requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
 
-        foreach (var entry in archive.FileEntries.OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase))
+        var entries = await RunWithPasswordRetryAsync(
+            inputArchive,
+            "List archive",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(archives.List(inputArchive, resolvedPassword))).ConfigureAwait(false);
+
+        Console.WriteLine($"Archive: {inputArchive}");
+        Console.WriteLine("ID\tType\tOriginal\tCompressed\tMethod\tEncrypted\tPath");
+        foreach (var entry in entries)
         {
             var type = entry.IsDirectory ? "DIR" : "FILE";
-            var method = "-";
-            if (!entry.IsDirectory && blockLookup.TryGetValue(entry.EntryId, out var blocks))
+            Console.WriteLine($"{entry.Id}\t{type}\t{entry.OriginalSize}\t{entry.CompressedSize}\t{entry.Method}\t{entry.IsEncrypted}\t{entry.Path}");
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> InfoAsync(UniversalArchiveService archives, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace info <input_archive> [--password <value>|--password-file <path>]");
+            return 1;
+        }
+
+        var inputArchive = args[0];
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(inputArchive, "Read archive info", IsWrite: false),
+            requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+
+        var info = await RunWithPasswordRetryAsync(
+            inputArchive,
+            "Read archive info",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(archives.Info(inputArchive, resolvedPassword))).ConfigureAwait(false);
+
+        PrintArchiveSummary(inputArchive, info);
+        return 0;
+    }
+
+    private static async Task<int> TestAsync(UniversalArchiveService archives, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace test <input_archive> [--password <value>|--password-file <path>]");
+            return 1;
+        }
+
+        var inputArchive = args[0];
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(inputArchive, "Test archive", IsWrite: false),
+            requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+
+        Console.WriteLine($"Testing archive: {inputArchive}");
+        var result = await RunWithPasswordRetryAsync(
+            inputArchive,
+            "Test archive",
+            passwordOptions,
+            password,
+            async resolvedPassword =>
             {
-                method = string.Join(",", blocks.Select(b => b.CompressionMethod.ToString()).Distinct());
-            }
+                var testResult = await archives.TestAsync(inputArchive, resolvedPassword).ConfigureAwait(false);
+                if (!testResult.Success && IsPasswordRequiredMessage(testResult.Message) && resolvedPassword is null)
+                {
+                    throw new ArchivePasswordRequiredException(inputArchive);
+                }
 
-            Console.WriteLine($"{entry.EntryId}\t{type}\t{entry.OriginalSize}\t{entry.CompressedSize}\t{method}\t{entry.RelativePath}");
-        }
+                return testResult;
+            }).ConfigureAwait(false);
 
-        return 0;
-    }
-
-    private static int Info(ArchiveReader reader, string[] args)
-    {
-        if (args.Length < 1)
-        {
-            Console.Error.WriteLine("Usage: laplace info <input.lpc>");
-            return 1;
-        }
-
-        var archive = reader.Read(args[0]);
-        var info = ArchiveInfoBuilder.Build(archive);
-        Console.WriteLine($"Archive: {args[0]}");
-        Console.WriteLine($"Version: LPC{info.ArchiveVersion}");
-        Console.WriteLine($"Files: {info.FileCount}");
-        Console.WriteLine($"Folders: {info.FolderCount}");
-        Console.WriteLine($"Blocks: {info.BlockCount}");
-        Console.WriteLine($"Created (UTC): {info.CreatedUtc:O}");
-        Console.WriteLine($"Methods: {string.Join(", ", info.MethodsUsed)}");
-        Console.WriteLine($"Original size: {info.OriginalSize} bytes");
-        Console.WriteLine($"Compressed size: {info.CompressedSize} bytes");
-        Console.WriteLine($"Ratio: {info.Ratio:P2}");
-        Console.WriteLine($"Space saved: {(info.OriginalSize - info.CompressedSize)} bytes");
-        return 0;
-    }
-
-    private static async Task<int> TestAsync(ArchiveTester tester, string[] args)
-    {
-        if (args.Length < 1)
-        {
-            Console.Error.WriteLine("Usage: laplace test <input.lpc>");
-            return 1;
-        }
-
-        Console.WriteLine($"Testing archive: {args[0]}");
-        var result = await tester.TestAsync(args[0], ProgressToConsole()).ConfigureAwait(false);
         Console.WriteLine();
         if (result.Success)
         {
@@ -293,6 +345,163 @@ internal static class Program
         return options;
     }
 
+    private sealed class ParsedPasswordOptions
+    {
+        public string? Password { get; init; }
+        public string? PasswordFile { get; init; }
+        public bool EncryptRequested { get; init; }
+        public bool HasExplicitSecret => Password is not null || PasswordFile is not null;
+    }
+
+    private static ParsedPasswordOptions ParsePasswordOptions(string[] args)
+    {
+        string? password = null;
+        string? passwordFile = null;
+        var encrypt = false;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            var current = args[i];
+            if (current.Equals("--encrypt", StringComparison.OrdinalIgnoreCase))
+            {
+                encrypt = true;
+            }
+            else if (current.Equals("--password", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    throw new ArgumentException("--password requires a value.");
+                }
+
+                password = args[++i];
+            }
+            else if (current.Equals("--password-file", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    throw new ArgumentException("--password-file requires a path.");
+                }
+
+                passwordFile = args[++i];
+            }
+        }
+
+        return new ParsedPasswordOptions
+        {
+            Password = password,
+            PasswordFile = passwordFile,
+            EncryptRequested = encrypt
+        };
+    }
+
+    private static async Task<PasswordContext?> ResolvePasswordAsync(
+        ParsedPasswordOptions options,
+        PasswordRequest request,
+        bool requirePassword)
+    {
+        var explicitPassword = ReadExplicitPassword(options);
+        if (explicitPassword is not null)
+        {
+            return explicitPassword;
+        }
+
+        if (!requirePassword)
+        {
+            return null;
+        }
+
+        var provider = CreatePasswordProvider();
+        var password = await provider.GetPasswordAsync(request).ConfigureAwait(false);
+        if (password is null)
+        {
+            throw new ArchivePasswordRequiredException(request.ArchivePath);
+        }
+
+        return password;
+    }
+
+    private static PasswordContext? ReadExplicitPassword(ParsedPasswordOptions options)
+    {
+        if (options.Password is not null)
+        {
+            return new PasswordContext(options.Password);
+        }
+
+        if (options.PasswordFile is null)
+        {
+            return null;
+        }
+
+        var value = File.ReadAllText(options.PasswordFile).TrimEnd('\r', '\n');
+        if (string.IsNullOrEmpty(value))
+        {
+            throw new ArgumentException("Password file is empty.");
+        }
+
+        return new PasswordContext(value);
+    }
+
+    private static IPasswordProvider CreatePasswordProvider()
+    {
+        var interactive = Environment.UserInteractive && !Console.IsInputRedirected;
+        if (!interactive)
+        {
+            return new FallbackPasswordProvider();
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            return new FallbackPasswordProvider(new WindowsPopupPasswordProvider(), new ConsolePasswordProvider());
+        }
+
+        return new ConsolePasswordProvider();
+    }
+
+    private static async Task RunWithPasswordRetryAsync(
+        string archivePath,
+        string operation,
+        ParsedPasswordOptions passwordOptions,
+        PasswordContext? password,
+        Func<PasswordContext?, Task> action)
+    {
+        await RunWithPasswordRetryAsync<object?>(
+            archivePath,
+            operation,
+            passwordOptions,
+            password,
+            async resolvedPassword =>
+            {
+                await action(resolvedPassword).ConfigureAwait(false);
+                return null;
+            }).ConfigureAwait(false);
+    }
+
+    private static async Task<T> RunWithPasswordRetryAsync<T>(
+        string archivePath,
+        string operation,
+        ParsedPasswordOptions passwordOptions,
+        PasswordContext? password,
+        Func<PasswordContext?, Task<T>> action)
+    {
+        try
+        {
+            return await action(password).ConfigureAwait(false);
+        }
+        catch (ArchivePasswordRequiredException) when (password is null)
+        {
+            var promptedPassword = await ResolvePasswordAsync(
+                passwordOptions,
+                new PasswordRequest(archivePath, operation, IsWrite: false, IsRetry: true),
+                requirePassword: true).ConfigureAwait(false);
+            return await action(promptedPassword).ConfigureAwait(false);
+        }
+    }
+
+    private static bool IsPasswordRequiredMessage(string message)
+    {
+        return message.Contains("requires a password", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompressionMode ParseMode(string mode)
     {
         return mode.ToLowerInvariant() switch
@@ -345,16 +554,16 @@ internal static class Program
     {
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> <output.lpc> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify]");
-        Console.WriteLine("  laplace extract <input.lpc> <output_folder> [--overwrite]");
-        Console.WriteLine("  laplace list <input.lpc>");
-        Console.WriteLine("  laplace info <input.lpc>");
-        Console.WriteLine("  laplace test <input.lpc>");
+        Console.WriteLine("  laplace compress <input_path...> <output.lpc|output.zip> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace info <input_archive> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace test <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace benchmark <input_path>");
         Console.WriteLine("  laplace open <archive.lpc>");
-        Console.WriteLine("  laplace extract-here <archive.lpc>");
-        Console.WriteLine("  laplace extract-to-folder <archive.lpc> <output_folder>");
-        Console.WriteLine("  laplace extract-to-named-folder <archive.lpc>");
+        Console.WriteLine("  laplace extract-here <archive> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace integrate install|uninstall|status [--cli-path <path-to-laplace.exe>]");
     }
 
@@ -376,6 +585,35 @@ internal static class Program
         Console.WriteLine($"Space saved: {saved} bytes");
         Console.WriteLine($"Time used: {elapsed.TotalSeconds:F2}s");
         Console.WriteLine($"Compression speed: {FormatSpeed(originalBytes, elapsed)}");
+    }
+
+    private static void PrintArchiveSummary(string archivePath, ArchiveSummary info)
+    {
+        Console.WriteLine($"Archive: {archivePath}");
+        Console.WriteLine($"Format: {info.Format}");
+        if (info.ArchiveVersion > 0)
+        {
+            Console.WriteLine($"Version: {info.ArchiveVersion}");
+        }
+
+        Console.WriteLine($"Encrypted: {info.IsEncrypted}");
+        Console.WriteLine($"Files: {info.FileCount}");
+        Console.WriteLine($"Folders: {info.FolderCount}");
+        Console.WriteLine($"Blocks/entries: {info.BlockCount}");
+        if (info.CreatedUtc is not null)
+        {
+            Console.WriteLine($"Created (UTC): {info.CreatedUtc:O}");
+        }
+
+        Console.WriteLine($"Methods: {string.Join(", ", info.MethodsUsed)}");
+        Console.WriteLine($"Original size: {info.OriginalSize} bytes");
+        Console.WriteLine($"Compressed size: {info.CompressedSize} bytes");
+        Console.WriteLine($"Ratio: {info.Ratio:P2}");
+        Console.WriteLine($"Space saved: {(info.OriginalSize - info.CompressedSize)} bytes");
+        if (!string.IsNullOrWhiteSpace(info.Notes))
+        {
+            Console.WriteLine($"Notes: {info.Notes}");
+        }
     }
 
     private static string FormatSpeed(long bytes, TimeSpan elapsed)
@@ -401,45 +639,81 @@ internal static class Program
         return 0;
     }
 
-    private static async Task<int> ExtractHereAsync(ArchiveExtractor extractor, string[] args)
+    private static async Task<int> ExtractHereAsync(UniversalArchiveService archives, string[] args)
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace extract-here <archive.lpc>");
+            Console.Error.WriteLine("Usage: laplace extract-here <archive> [--password <value>|--password-file <path>]");
             return 1;
         }
 
         var archivePath = Path.GetFullPath(args[0]);
         var target = Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory();
-        await extractor.ExtractAsync(archivePath, target, new ExtractArchiveOptions { Overwrite = false, VerifyChecksums = true }).ConfigureAwait(false);
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            "Extract archive",
+            passwordOptions,
+            password,
+            async resolvedPassword => await archives.ExtractAsync(archivePath, target, new ExtractArchiveOptions
+            {
+                Overwrite = false,
+                VerifyChecksums = true,
+                Password = resolvedPassword
+            }).ConfigureAwait(false)).ConfigureAwait(false);
         Console.WriteLine($"Extracted to: {target}");
         return 0;
     }
 
-    private static async Task<int> ExtractToFolderAsync(ArchiveExtractor extractor, string[] args)
+    private static async Task<int> ExtractToFolderAsync(UniversalArchiveService archives, string[] args)
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace extract-to-folder <archive.lpc> <output_folder>");
+            Console.Error.WriteLine("Usage: laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>]");
             return 1;
         }
 
-        await extractor.ExtractAsync(args[0], args[1], new ExtractArchiveOptions { Overwrite = false, VerifyChecksums = true }).ConfigureAwait(false);
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(args[0], "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        await RunWithPasswordRetryAsync(
+            args[0],
+            "Extract archive",
+            passwordOptions,
+            password,
+            async resolvedPassword => await archives.ExtractAsync(args[0], args[1], new ExtractArchiveOptions
+            {
+                Overwrite = false,
+                VerifyChecksums = true,
+                Password = resolvedPassword
+            }).ConfigureAwait(false)).ConfigureAwait(false);
         Console.WriteLine($"Extracted to: {args[1]}");
         return 0;
     }
 
-    private static async Task<int> ExtractToNamedFolderAsync(ArchiveExtractor extractor, string[] args)
+    private static async Task<int> ExtractToNamedFolderAsync(UniversalArchiveService archives, string[] args)
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace extract-to-named-folder <archive.lpc>");
+            Console.Error.WriteLine("Usage: laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>]");
             return 1;
         }
 
         var archivePath = Path.GetFullPath(args[0]);
         var folder = Path.Combine(Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(archivePath));
-        await extractor.ExtractAsync(archivePath, folder, new ExtractArchiveOptions { Overwrite = false, VerifyChecksums = true }).ConfigureAwait(false);
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            "Extract archive",
+            passwordOptions,
+            password,
+            async resolvedPassword => await archives.ExtractAsync(archivePath, folder, new ExtractArchiveOptions
+            {
+                Overwrite = false,
+                VerifyChecksums = true,
+                Password = resolvedPassword
+            }).ConfigureAwait(false)).ConfigureAwait(false);
         Console.WriteLine($"Extracted to: {folder}");
         return 0;
     }

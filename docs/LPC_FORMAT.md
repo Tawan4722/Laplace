@@ -16,8 +16,8 @@ All offsets and sizes use 64-bit fields where relevant.
 | Field | Type | Notes |
 |---|---|---|
 | Magic | 4 bytes ASCII | `LPC1` |
-| FormatVersion | `UInt16` | currently `1` |
-| ArchiveFlags | `UInt16` | reserved |
+| FormatVersion | `UInt16` | `1` unencrypted, `2` supports encrypted payload blocks |
+| ArchiveFlags | `UInt16` | bit `1` = encrypted payload blocks |
 | CreatedUnixMilliseconds | `Int64` | UTC timestamp |
 | CreatorVersion | `UInt32` | Laplace writer version |
 | DefaultBlockSize | `UInt32` | default bytes per block |
@@ -27,7 +27,12 @@ All offsets and sizes use 64-bit fields where relevant.
 | BlockTableOffset | `Int64` | absolute stream offset |
 | DataSectionOffset | `Int64` | absolute stream offset |
 | Comment | UTF-8 string | length-prefixed `Int32` + bytes |
+| EncryptionAlgorithmId | `Byte` | LPCv2 only; `1` = AES-256-GCM |
+| KeyDerivationIterations | `Int32` | LPCv2 only; PBKDF2-HMAC-SHA256 iterations |
+| EncryptionSalt | bytes | LPCv2 only; length-prefixed `Int32` + bytes |
 | HeaderChecksumCrc32C | `UInt32` | CRC32C over header bytes excluding this field |
+
+LPCv2 encryption protects block payload bytes only. File names, sizes, timestamps, and table metadata remain readable so `list` and `info` can work without decrypting file contents.
 
 ## File Entry Table
 
@@ -65,6 +70,8 @@ Each block record stores:
 - `BlockChecksumCrc32C` (`UInt32`)
 - `Flags` (`UInt32`)
 - `IsRaw` (`Boolean`)
+- `EncryptionNonce` (LPCv2 only, length-prefixed)
+- `EncryptionTag` (LPCv2 only, length-prefixed)
 
 ## Compression Method IDs
 
@@ -81,6 +88,7 @@ Each block record stores:
 - Header CRC32C validates archive metadata framing.
 - Block CRC32C validates stored block bytes before decompression.
 - File SHA-256 validates reconstructed file content.
+- Encrypted LPCv2 blocks use AES-256-GCM authentication before decompression.
 
 ## Versioning Policy
 

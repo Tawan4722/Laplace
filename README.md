@@ -1,85 +1,142 @@
 # Laplace
 
-Laplace is a Windows-first archive and compression project built around a custom archive format: **`.lpc`**.
+![Laplace logo](assets/laplace-logo.png)
 
-- Project: `Laplace`
-- Archive extension: `.lpc`
+Laplace is a Windows-first archive and compression tool with its own native `.lpc` archive format, password-protected archives, common archive extraction, and Explorer shell integration.
+
+It is implemented in C#/.NET end-to-end. The native `.lpc` format is not a wrapper around 7-Zip, WinRAR, or Windows shell archive commands.
+
+## What It Does
+
+- Creates native `.lpc` archives with adaptive per-block compression.
+- Creates `.zip` archives, including AES-256 encrypted ZIP output.
+- Extracts, lists, inspects, and tests common archive formats.
+- Supports password-protected `.lpc` and `.zip` archives.
+- Provides Windows Explorer integration for `.lpc` files and context-menu compression/extraction helpers.
+- Ships as a self-contained Windows installer, so users do not need to install .NET separately.
+
+## Supported Formats
+
+Create/write:
+
+- `.lpc`
+- `.zip`
+
+Read, list, info, test, and extract:
+
+- `.lpc`
+- `.zip`
+- `.7z`
+- `.rar` read-only
+- `.tar`
+- `.tar.gz`, `.tgz`
+- `.tar.bz2`, `.tbz2`
+- `.tar.xz`, `.txz`
+- `.gz`
+- `.bz2`
+- `.xz`
+- `.zst`
+- `.lzip`
+
+Unsupported formats fail with a clear error instead of silently producing partial output.
+
+## Native LPC Format
+
+Laplace's native archive format uses:
+
+- Extension: `.lpc`
 - Magic header: `LPC1`
-- Runtime: .NET 8+
+- Current versions: LPCv1 and LPCv2
+- Metadata tables for files and blocks
+- Streaming reader/writer architecture
+- Header CRC32C
+- Per-block CRC32C
+- Per-file SHA-256
 
-Laplace is implemented in C# end-to-end. It is not a thin wrapper around 7-Zip, WinRAR, or OS shell archive commands.
+LPCv2 adds password-protected payload encryption. File names and metadata remain readable; file block payloads are encrypted.
 
-## Highlights
+See [docs/LPC_FORMAT.md](docs/LPC_FORMAT.md) for the binary layout.
 
-- Custom `.lpc` container with documented binary layout
-- Streaming archive writer/reader architecture
-- Per-block compression metadata and checksums
-- Adaptive compression engine (file type + entropy + sample scoring)
-- Compression methods:
-  - `RAW`
-  - `LZ4_FAST`
-  - `ZSTD_FAST`
-  - `ZSTD_BALANCED`
-  - `ZSTD_HIGH`
-  - `DEFLATE_FALLBACK`
-  - `LZMA_MAX` method ID reserved (currently mapped to high-compression profile)
-- Integrity and validation:
-  - Header checksum
-  - Per-block CRC32C
-  - Per-file SHA-256
-  - Safe extraction path validation
-- CLI commands:
-  - `compress`, `extract`, `list`, `info`, `test`, `benchmark`
-  - Shell helpers (`open`, `extract-here`, `extract-to-folder`, `extract-to-named-folder`)
-- Per-user Windows shell integration manager (`integrate install|status|uninstall`)
+## Compression
 
-## Quick Start
+Laplace chooses compression strategy from file type, entropy, repetition, and selected mode.
 
-### Prerequisites
+Available methods:
 
-- Windows
-- .NET SDK 8.0+
+- `RAW`
+- `LZ4_FAST`
+- `ZSTD_FAST`
+- `ZSTD_BALANCED`
+- `ZSTD_HIGH`
+- `DEFLATE_FALLBACK`
+- `LZMA_MAX` method ID reserved
 
-Optional for packaging:
+Modes:
 
-- Inno Setup 6 (for `.exe` installer)
-- Windows SDK (`makeappx.exe`, `signtool.exe`) for MSIX
+- `fast`
+- `balanced`
+- `maximum`
+- `auto`
 
-### One-command setup
+Blocks that do not get smaller after compression are stored as `RAW`, so incompressible data is not blindly expanded.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
-```
+See [docs/ADAPTIVE_COMPRESSION.md](docs/ADAPTIVE_COMPRESSION.md).
 
-Or from Command Prompt:
+## Passwords And Encryption
 
-```bat
-setup.cmd
-```
+CLI password inputs:
 
-`setup.ps1` will:
+- `--password <value>`
+- `--password-file <path>`
+- Interactive Windows popup when a password is required and no flag was supplied
+- Console prompt fallback if the popup cannot be shown
 
-- Validate `.NET SDK` version
-- Run `dotnet restore`
-- Run `dotnet build`
-- Run `dotnet test`
-- Report optional installer/MSIX tool availability
+LPC encryption:
 
-Optional flags:
+- LPCv2 payload-only encryption
+- AES-256-GCM per block
+- PBKDF2-HMAC-SHA256 key derivation
+- Per-archive random salt
+- Per-block random nonce and authentication tag
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Configuration Debug -SkipTests
-```
+ZIP encryption:
+
+- AES-256 encrypted ZIP creation
+- Password-aware extraction, test, list, and info paths
+
+Non-interactive runs never try to show UI. They require `--password` or `--password-file`.
+
+## Install
+
+Download `LaplaceSetup.exe` from the latest GitHub Release and run it.
+
+The installer:
+
+- Installs to `%LOCALAPPDATA%\Laplace`
+- Includes `laplace.exe`, docs, and runtime dependencies
+- Can optionally register `.lpc` file association
+- Can optionally add Explorer context-menu actions
+
+For local builds, the root `Setup.exe` file is generated by the packaging script and is intentionally not committed to git.
 
 ## CLI Usage
 
-`laplace` is produced by `src/Laplace.Cli`.
+Run from source:
+
+```powershell
+dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- <command>
+```
+
+After install:
+
+```powershell
+laplace <command>
+```
 
 ### Compress
 
 ```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- `
-  compress <input_path...> <output.lpc> `
+laplace compress <input_path...> <output.lpc|output.zip> `
   --mode fast|balanced|maximum|auto `
   --block-size 4M|8M|16M|32M|64M `
   --solid on|off|auto `
@@ -90,75 +147,148 @@ dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- `
 Examples:
 
 ```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- compress .\folder .\build.lpc --mode balanced --block-size 8M --verify
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- compress .\src .\docs .\project.lpc --mode auto
+laplace compress .\folder .\archive.lpc --mode balanced --verify
+laplace compress .\folder .\archive.zip --mode maximum
+laplace compress .\folder .\secure.lpc --encrypt
+laplace compress .\folder .\secure.zip --password "secret"
+laplace compress .\folder .\secure.lpc --password-file .\password.txt
 ```
 
 ### Extract
 
 ```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- extract .\build.lpc .\out --overwrite
+laplace extract .\archive.lpc .\out --overwrite
+laplace extract .\secure.zip .\out --password "secret"
+laplace extract .\secure.lpc .\out --password-file .\password.txt
 ```
 
-### List / Info / Test
+### List, Info, And Test
 
 ```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- list .\build.lpc
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- info .\build.lpc
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- test .\build.lpc
+laplace list .\archive.lpc
+laplace info .\archive.zip
+laplace test .\secure.lpc --password "secret"
+```
+
+### Shell Helper Commands
+
+```powershell
+laplace open .\archive.lpc
+laplace extract-here .\archive.lpc
+laplace extract-to-folder .\archive.lpc .\destination
+laplace extract-to-named-folder .\archive.lpc
 ```
 
 ### Benchmark
 
 ```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- benchmark .\folder
+laplace benchmark .\folder
 ```
 
-### Shell helpers
+### Shell Integration
 
 ```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- open .\build.lpc
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- extract-here .\build.lpc
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- extract-to-named-folder .\build.lpc
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- extract-to-folder .\build.lpc .\any-destination
+laplace integrate install
+laplace integrate status
+laplace integrate uninstall
 ```
 
-## Packaging
+Shell integration is per-user and writes under HKCU. It does not require administrator privileges.
 
-### EXE installer (Inno Setup)
+## Security
+
+Laplace extraction defends against common archive risks:
+
+- Blocks absolute archive paths
+- Blocks path traversal paths such as `..\..\evil.exe`
+- Rejects unsafe link entries in external archives
+- Validates LPC header and block offsets
+- Validates block CRC32C before decompression
+- Validates decompressed block sizes
+- Validates SHA-256 for extracted LPC files
+- Authenticates encrypted LPC blocks with AES-GCM
+
+Password values are not printed in command output.
+
+## Build From Source
+
+Prerequisites:
+
+- Windows
+- .NET SDK 8.0+
+
+Setup, build, and test:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 -Configuration Release -Runtime win-x64 -Version 0.1.0
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+Manual commands:
+
+```powershell
+dotnet restore
+dotnet build -c Release
+dotnet test -c Release
+```
+
+## Build Installer
+
+Prerequisites:
+
+- Inno Setup 6
+
+Build a self-contained Windows installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
+  -Configuration Release `
+  -Runtime win-x64 `
+  -Version 1.0.0 `
+  -SelfContained
 ```
 
 Output:
 
 - `artifacts\installer\LaplaceSetup.exe`
 
-### MSIX package
+The project root `Setup.exe` can be refreshed from that output:
+
+```powershell
+Copy-Item .\artifacts\installer\LaplaceSetup.exe .\Setup.exe -Force
+```
+
+## Build MSIX
+
+Prerequisites:
+
+- Windows SDK with `makeappx.exe` and `signtool.exe`
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installer\build-msix.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version 0.1.0.0 `
+  -Version 1.0.0.0 `
   -PackageName Laplace.Project `
-  -Publisher "CN=LaplaceProject"
+  -Publisher "CN=LaplaceProject" `
+  -SelfContained
 ```
 
 Output:
 
 - `artifacts\msix\Laplace_<version>_<runtime>.msix`
 
-For full MSIX details, see `docs/MSIX.md`.
+See [docs/MSIX.md](docs/MSIX.md).
 
 ## Release Process
 
-Release artifacts are built by GitHub Actions when a version tag is pushed.
+Releases are automated by GitHub Actions.
+
+Create a version tag:
 
 ```powershell
-git tag -a v0.1.1 -m "Laplace v0.1.1"
-git push origin v0.1.1
+git tag -a v1.0.0 -m "Laplace v1.0.0"
+git push origin main
+git push origin v1.0.0
 ```
 
 The release workflow publishes:
@@ -167,32 +297,19 @@ The release workflow publishes:
 - `Laplace_<version>_win-x64.msix`
 - `SHA256SUMS.txt`
 
-The project also runs CI on every push to `main` and every pull request.
-
-## Format and Safety
-
-- Detailed `.lpc` format specification: `docs/LPC_FORMAT.md`
-- Adaptive compression behavior: `docs/ADAPTIVE_COMPRESSION.md`
-- Shell integration design and operations: `docs/SHELL_INTEGRATION.md`
-
-Security and integrity checks include:
-
-- Path traversal and absolute-path extraction rejection
-- Header checksum verification
-- Offset/size bounds validation
-- Block CRC32C verification before decompression
-- Decompressed-size checks for each block
-- SHA-256 verification for extracted files
-
 ## Repository Layout
 
 ```text
 Laplace.sln
+assets/
+  laplace-logo.svg
+  laplace-logo.png
+  laplace-logo.ico
 src/
-  Laplace.Core/              # archive format, reader/writer, extractor, validator, adaptive logic
-  Laplace.Compression/       # compressor implementations and registry
-  Laplace.Cli/               # command-line app
-  Laplace.ShellIntegration/  # Windows HKCU file association/context verb registration
+  Laplace.Core/              # native format, reader/writer, extraction, validation, routing
+  Laplace.Compression/       # block compressor implementations
+  Laplace.Cli/               # command-line app and password UI
+  Laplace.ShellIntegration/  # HKCU file association and Explorer verbs
 tests/
   Laplace.Tests/             # unit and integration tests
 docs/
@@ -209,30 +326,6 @@ installer/
   release.yml
 ```
 
-## Development
-
-Build manually:
-
-```powershell
-dotnet restore
-dotnet build -c Release
-```
-
-Run tests:
-
-```powershell
-dotnet test -c Release
-```
-
-The repository includes `global.json` to keep local and CI builds on the same .NET SDK feature band.
-
-## Roadmap
-
-- Expand compression backend tuning and performance pipeline
-- Improve many-small-files and solid-block behavior
-- Implement WPF GUI archive manager
-- Improve installer/uninstaller diagnostics and repair flow
-
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).

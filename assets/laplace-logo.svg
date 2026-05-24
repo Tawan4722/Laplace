@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Laplace Logo</title>
+  <desc id="desc">A white book with a blue frame and a letter L on the cover.</desc>
+  <defs>
+    <linearGradient id="frame" x1="96" y1="32" x2="416" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1e88ff"/>
+      <stop offset="1" stop-color="#0b4fc4"/>
+    </linearGradient>
+    <linearGradient id="page" x1="142" y1="76" x2="370" y2="438" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eaf3ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#093b86" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#f5fbff"/>
+  <g filter="url(#shadow)">
+    <path d="M126 76h218c30 0 54 24 54 54v306H162c-20 0-36-16-36-36V76z" fill="url(#frame)"/>
+    <path d="M166 116h178c8 0 14 6 14 14v250H166V116z" fill="url(#page)"/>
+    <path d="M166 380h210c12 0 22 10 22 22v34H166c-20 0-36-16-36-36s16-20 36-20z" fill="#d8eaff"/>
+    <path d="M166 396h194" stroke="#ffffff" stroke-width="12" stroke-linecap="round"/>
+    <path d="M126 76h40v360h-4c-20 0-36-16-36-36V76z" fill="#0a4db8"/>
+    <path d="M226 164v140h92" fill="none" stroke="#0b55c8" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -14,4 +14,6 @@ public sealed class BlockEntryRecord
     public uint BlockChecksumCrc32C { get; set; }
     public uint Flags { get; set; }
     public bool IsRaw { get; set; }
+    public byte[] EncryptionNonce { get; set; } = [];
+    public byte[] EncryptionTag { get; set; } = [];
 }

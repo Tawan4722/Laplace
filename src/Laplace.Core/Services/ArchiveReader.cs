@@ -14,8 +14,8 @@ public sealed class ArchiveReader
         stream.Position = header.FileTableOffset;
         var files = ArchiveFormatCodec.ReadFileEntries(stream, header.FileEntryCount);
         stream.Position = header.BlockTableOffset;
-        var blocks = ArchiveFormatCodec.ReadBlockEntries(stream, header.BlockEntryCount);
-        ArchiveValidator.ValidateBlockEntries(blocks, stream.Length);
+        var blocks = ArchiveFormatCodec.ReadBlockEntries(stream, header.BlockEntryCount, header.FormatVersion);
+        ArchiveValidator.ValidateBlockEntries(blocks, stream.Length, header);
 
         return new ArchiveDocument
         {

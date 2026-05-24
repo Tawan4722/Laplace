@@ -24,6 +24,13 @@ internal static class ArchiveFormatCodec
             writer.Write(header.BlockTableOffset);
             writer.Write(header.DataSectionOffset);
             BinaryCodec.WriteUtf8String(writer, header.Comment);
+            if (header.FormatVersion >= 2)
+            {
+                writer.Write(header.EncryptionAlgorithmId);
+                writer.Write(header.KeyDerivationIterations);
+                writer.Write(header.EncryptionSalt.Length);
+                writer.Write(header.EncryptionSalt);
+            }
         }
 
         var data = ms.ToArray();
@@ -57,6 +64,26 @@ internal static class ArchiveFormatCodec
         var blockTableOffset = reader.ReadInt64();
         var dataSectionOffset = reader.ReadInt64();
         var comment = BinaryCodec.ReadUtf8String(reader);
+        byte encryptionAlgorithmId = 0;
+        var keyDerivationIterations = 0;
+        byte[] encryptionSalt = [];
+        if (formatVersion >= 2)
+        {
+            encryptionAlgorithmId = reader.ReadByte();
+            keyDerivationIterations = reader.ReadInt32();
+            var saltLength = reader.ReadInt32();
+            if (saltLength < 0 || saltLength > 1024)
+            {
+                throw new LaplaceArchiveException("Invalid encryption salt length.");
+            }
+
+            encryptionSalt = reader.ReadBytes(saltLength);
+            if (encryptionSalt.Length != saltLength)
+            {
+                throw new EndOfStreamException("Unexpected end of stream while reading encryption salt.");
+            }
+        }
+
         var checksumPosition = stream.Position;
         var checksum = reader.ReadUInt32();
 
@@ -88,7 +115,10 @@ internal static class ArchiveFormatCodec
             BlockTableOffset = blockTableOffset,
             DataSectionOffset = dataSectionOffset,
             Comment = comment,
-            HeaderChecksumCrc32C = checksum
+            HeaderChecksumCrc32C = checksum,
+            EncryptionAlgorithmId = encryptionAlgorithmId,
+            KeyDerivationIterations = keyDerivationIterations,
+            EncryptionSalt = encryptionSalt
         };
     }
 
@@ -162,7 +192,7 @@ internal static class ArchiveFormatCodec
         return list;
     }
 
-    public static void WriteBlockEntries(Stream stream, IReadOnlyList<BlockEntryRecord> blocks)
+    public static void WriteBlockEntries(Stream stream, IReadOnlyList<BlockEntryRecord> blocks, ushort formatVersion = 1)
     {
         using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
         foreach (var block in blocks)
@@ -177,17 +207,24 @@ internal static class ArchiveFormatCodec
             writer.Write(block.BlockChecksumCrc32C);
             writer.Write(block.Flags);
             writer.Write(block.IsRaw);
+            if (formatVersion >= 2)
+            {
+                writer.Write(block.EncryptionNonce.Length);
+                writer.Write(block.EncryptionNonce);
+                writer.Write(block.EncryptionTag.Length);
+                writer.Write(block.EncryptionTag);
+            }
         }
     }
 
-    public static List<BlockEntryRecord> ReadBlockEntries(Stream stream, long count)
+    public static List<BlockEntryRecord> ReadBlockEntries(Stream stream, long count, ushort formatVersion = 1)
     {
         var list = new List<BlockEntryRecord>((int)Math.Min(count, int.MaxValue));
         using var reader = new BinaryReader(stream, Encoding.UTF8, true);
 
         for (long i = 0; i < count; i++)
         {
-            list.Add(new BlockEntryRecord
+            var block = new BlockEntryRecord
             {
                 BlockId = reader.ReadInt64(),
                 OwningFileEntryId = reader.ReadInt64(),
@@ -199,7 +236,36 @@ internal static class ArchiveFormatCodec
                 BlockChecksumCrc32C = reader.ReadUInt32(),
                 Flags = reader.ReadUInt32(),
                 IsRaw = reader.ReadBoolean()
-            });
+            };
+
+            if (formatVersion >= 2)
+            {
+                var nonceLength = reader.ReadInt32();
+                if (nonceLength < 0 || nonceLength > 1024)
+                {
+                    throw new LaplaceArchiveException("Invalid encrypted block nonce length.");
+                }
+
+                block.EncryptionNonce = reader.ReadBytes(nonceLength);
+                if (block.EncryptionNonce.Length != nonceLength)
+                {
+                    throw new EndOfStreamException("Unexpected end of stream while reading encrypted block nonce.");
+                }
+
+                var tagLength = reader.ReadInt32();
+                if (tagLength < 0 || tagLength > 1024)
+                {
+                    throw new LaplaceArchiveException("Invalid encrypted block tag length.");
+                }
+
+                block.EncryptionTag = reader.ReadBytes(tagLength);
+                if (block.EncryptionTag.Length != tagLength)
+                {
+                    throw new EndOfStreamException("Unexpected end of stream while reading encrypted block tag.");
+                }
+            }
+
+            list.Add(block);
         }
 
         return list;

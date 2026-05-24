@@ -26,7 +26,8 @@ public static class ArchiveInfoBuilder
             CompressedSize = compressedSize,
             Ratio = originalSize == 0 ? 1 : (double)compressedSize / originalSize,
             MethodsUsed = methods,
-            CreatedUtc = DateTimeOffset.FromUnixTimeMilliseconds(archive.Header.CreatedUnixMilliseconds).UtcDateTime
+            CreatedUtc = DateTimeOffset.FromUnixTimeMilliseconds(archive.Header.CreatedUnixMilliseconds).UtcDateTime,
+            IsEncrypted = archive.Header.IsEncrypted
         };
     }
 }
@@ -42,4 +43,5 @@ public sealed class ArchiveInfo
     public double Ratio { get; init; }
     public required string[] MethodsUsed { get; init; }
     public DateTime CreatedUtc { get; init; }
+    public bool IsEncrypted { get; init; }
 }

@@ -1,8 +1,11 @@
 using Laplace.Compression;
+using Laplace.Core.Exceptions;
 using Laplace.Core.Enums;
 using Laplace.Core.Models;
 using Laplace.Core.Security;
 using Laplace.Core.Services;
+using ZipEntry = ICSharpCode.SharpZipLib.Zip.ZipEntry;
+using ZipOutputStream = ICSharpCode.SharpZipLib.Zip.ZipOutputStream;
 using Xunit;
 
 namespace Laplace.Tests;
@@ -157,6 +160,103 @@ public sealed class ArchiveRoundTripTests
         var tester = new ArchiveTester(registry);
         var result = await tester.TestAsync(archivePath);
         Assert.False(result.Success);
+    }
+
+    [Fact]
+    public async Task EncryptedLpc_WithCorrectPassword_RoundTrips()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "secret.txt");
+        await File.WriteAllTextAsync(sourceFile, string.Join(Environment.NewLine, Enumerable.Repeat("encrypted lpc payload", 500)));
+        var archivePath = Path.Combine(root, "secret.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var registry = new CompressorRegistry();
+        var password = new PasswordContext("correct horse battery staple");
+
+        var writer = new ArchiveWriter(registry);
+        await writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Balanced,
+            BlockSizeBytes = 4 * 1024 * 1024,
+            Password = password,
+            VerifyAfterCompression = false
+        });
+
+        var archive = new ArchiveReader().Read(archivePath);
+        Assert.True(archive.Header.IsEncrypted);
+        Assert.Equal(2, archive.Header.FormatVersion);
+
+        var tester = new ArchiveTester(registry);
+        Assert.True((await tester.TestAsync(archivePath, password)).Success);
+        Assert.False((await tester.TestAsync(archivePath, new PasswordContext("wrong password"))).Success);
+
+        var extractor = new ArchiveExtractor(registry);
+        await Assert.ThrowsAsync<ArchivePasswordRequiredException>(() =>
+            extractor.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true }));
+
+        await extractor.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            Password = password
+        });
+
+        Assert.Equal(await File.ReadAllTextAsync(sourceFile), await File.ReadAllTextAsync(Path.Combine(extractPath, "secret.txt")));
+    }
+
+    [Fact]
+    public async Task EncryptedZip_WithCorrectPassword_RoundTrips()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        Directory.CreateDirectory(sourceDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "secret.txt"), "zip secret zip secret zip secret");
+        var archivePath = Path.Combine(root, "secret.zip");
+        var extractPath = Path.Combine(root, "out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+        var password = new PasswordContext("zip-password");
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Password = password,
+            VerifyAfterCompression = false
+        });
+
+        var info = service.Info(archivePath, password);
+        Assert.Equal("ZIP", info.Format);
+        Assert.True(info.IsEncrypted);
+        Assert.True((await service.TestAsync(archivePath, password)).Success);
+        Assert.False((await service.TestAsync(archivePath, new PasswordContext("wrong"))).Success);
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            Password = password
+        });
+
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(sourceDir, "secret.txt")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "secret.txt")));
+    }
+
+    [Fact]
+    public async Task ZipExtraction_BlocksTraversalEntry()
+    {
+        var root = CreateTempFolder();
+        var archivePath = Path.Combine(root, "evil.zip");
+        await using (var file = File.Create(archivePath))
+        using (var zip = new ZipOutputStream(file))
+        {
+            await zip.PutNextEntryAsync(new ZipEntry("../evil.txt"), CancellationToken.None);
+            var bytes = "evil"u8.ToArray();
+            await zip.WriteAsync(bytes);
+            await zip.CloseEntryAsync(CancellationToken.None);
+            await zip.FinishAsync(CancellationToken.None);
+        }
+
+        var service = new UniversalArchiveService(new CompressorRegistry());
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            service.ExtractAsync(archivePath, Path.Combine(root, "out"), new ExtractArchiveOptions { Overwrite = true }));
+        Assert.False(File.Exists(Path.Combine(root, "evil.txt")));
     }
 
     private static string CreateTempFolder()

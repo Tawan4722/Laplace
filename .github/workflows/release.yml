@@ -55,7 +55,7 @@ jobs:
 
       - name: Build installer
         shell: pwsh
-        run: .\installer\build-installer.ps1 -Configuration Release -Runtime win-x64 -Version "${{ steps.version.outputs.version }}"
+        run: .\installer\build-installer.ps1 -Configuration Release -Runtime win-x64 -Version "${{ steps.version.outputs.version }}" -SelfContained
 
       - name: Build MSIX
         shell: pwsh
@@ -65,7 +65,8 @@ jobs:
             -Runtime win-x64 `
             -Version "${{ steps.version.outputs.msix_version }}" `
             -PackageName Laplace.Project `
-            -Publisher "CN=LaplaceProject"
+            -Publisher "CN=LaplaceProject" `
+            -SelfContained
 
       - name: Generate checksums
         shell: pwsh

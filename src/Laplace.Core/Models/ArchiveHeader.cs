@@ -3,6 +3,9 @@ namespace Laplace.Core.Models;
 public sealed class ArchiveHeader
 {
     public const string Magic = "LPC1";
+    public const ushort EncryptionFlag = 1;
+    public const byte EncryptionAlgorithmAes256Gcm = 1;
+
     public ushort FormatVersion { get; set; } = 1;
     public ushort ArchiveFlags { get; set; }
     public long CreatedUnixMilliseconds { get; set; }
@@ -15,4 +18,9 @@ public sealed class ArchiveHeader
     public long DataSectionOffset { get; set; }
     public string Comment { get; set; } = string.Empty;
     public uint HeaderChecksumCrc32C { get; set; }
+    public byte EncryptionAlgorithmId { get; set; }
+    public int KeyDerivationIterations { get; set; }
+    public byte[] EncryptionSalt { get; set; } = [];
+
+    public bool IsEncrypted => (ArchiveFlags & EncryptionFlag) != 0;
 }
