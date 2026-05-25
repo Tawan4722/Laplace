@@ -16,8 +16,19 @@ internal static class Program
     {
         if (args.Length == 0)
         {
+            if (TryLaunchDesktop([]))
+            {
+                return 0;
+            }
+
             PrintUsage();
             return 1;
+        }
+
+        if (args[0] is "--help" or "-h" or "/?")
+        {
+            PrintUsage();
+            return 0;
         }
 
         var registry = new CompressorRegistry();
@@ -635,7 +646,12 @@ internal static class Program
             return 1;
         }
 
-        Console.WriteLine("GUI is not part of Phase 1 build yet. Use `laplace list` or `laplace info`.");
+        if (TryLaunchDesktop(["--open", args[0]]))
+        {
+            return 0;
+        }
+
+        Console.WriteLine("Laplace desktop UI was not found next to the CLI. Use `laplace list` or `laplace info`, or run `dotnet run --project .\\src\\Laplace.Desktop\\Laplace.Desktop.csproj`.");
         return 0;
     }
 
@@ -720,7 +736,13 @@ internal static class Program
 
     private static int CompressDialogCommand(string[] args)
     {
-        Console.WriteLine("GUI create-archive dialog is not available yet in this phase.");
+        var launchArgs = new[] { "--add" }.Concat(args).ToArray();
+        if (TryLaunchDesktop(launchArgs))
+        {
+            return 0;
+        }
+
+        Console.WriteLine("Laplace desktop UI was not found next to the CLI.");
         Console.WriteLine($"Selected arguments: {string.Join(" ", args)}");
         return 0;
     }
@@ -787,6 +809,46 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static bool TryLaunchDesktop(IEnumerable<string> arguments)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        var guiPath = ResolveDesktopPath();
+        if (guiPath is null)
+        {
+            return false;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = guiPath,
+            UseShellExecute = true
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        Process.Start(startInfo);
+        return true;
+    }
+
+    private static string? ResolveDesktopPath()
+    {
+        var executable = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+        var directory = string.IsNullOrWhiteSpace(executable) ? AppContext.BaseDirectory : Path.GetDirectoryName(executable);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return null;
+        }
+
+        var candidate = Path.Combine(directory, "laplace-gui.exe");
+        return File.Exists(candidate) ? candidate : null;
     }
 
     private static void TryDelete(string filePath)

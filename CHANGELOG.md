@@ -2,6 +2,13 @@
 
 All notable changes to Laplace will be documented here.
 
+## 1.1.0
+
+- Added a Windows desktop archive-manager UI with RAR-style menus, toolbar actions, archive path bar, file listing, and status bar.
+- Added create, extract, inspect/list, test, and archive information workflows to the desktop UI.
+- Updated CLI open/dialog helper commands and Explorer shell integration to launch the desktop UI when available.
+- Updated installer packaging so Start Menu and desktop shortcuts open the GUI while the CLI remains available for automation.
+
 ## 1.0.0
 
 - Added common archive read/extract/list/info/test support through a format-routing layer.

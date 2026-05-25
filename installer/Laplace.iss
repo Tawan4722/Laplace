@@ -5,6 +5,7 @@
 #define AppPublisher "Laplace Project"
 #define AppURL "https://github.com/LaplaceProject/Laplace"
 #define AppExeName "laplace.exe"
+#define AppGuiExeName "laplace-gui.exe"
 #define AppId "{{F0EF4E86-D377-46E9-983A-50A83D5E6E52}"
 
 #ifndef PublishDir
@@ -31,7 +32,7 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayIcon={app}\{#AppExeName}
+UninstallDisplayIcon={app}\{#AppGuiExeName}
 SetupIconFile=..\assets\laplace-logo.ico
 
 [Languages]
@@ -48,8 +49,8 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{autodesktop}\Laplace"; Filename: "{app}\{#AppExeName}"; Parameters: "--help"; Tasks: desktopicon
-Name: "{autoprograms}\Laplace"; Filename: "{app}\{#AppExeName}"; Parameters: "--help"; Tasks: startmenuicon
+Name: "{autodesktop}\Laplace"; Filename: "{app}\{#AppGuiExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\Laplace"; Filename: "{app}\{#AppGuiExeName}"; Tasks: startmenuicon
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Parameters: "integrate install --cli-path ""{app}\{#AppExeName}"""; Flags: runhidden waituntilterminated; Tasks: shellintegration

@@ -32,7 +32,7 @@ $installerOutDir = Join-Path $repoRoot "artifacts\installer"
 $issPath = Join-Path $PSScriptRoot "Laplace.iss"
 $dotnet = Resolve-Dotnet
 
-Write-Host "==> Publishing Laplace CLI..."
+Write-Host "==> Publishing Laplace CLI and desktop UI..."
 if (Test-Path $publishDir) {
     Remove-Item -LiteralPath $publishDir -Recurse -Force
 }
@@ -40,6 +40,14 @@ if (Test-Path $publishDir) {
 $selfContainedValue = if ($SelfContained) { "true" } else { "false" }
 
 & $dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
+    -c $Configuration `
+    -r $Runtime `
+    --self-contained $selfContainedValue `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -o $publishDir
+
+& $dotnet publish (Join-Path $repoRoot "src\Laplace.Desktop\Laplace.Desktop.csproj") `
     -c $Configuration `
     -r $Runtime `
     --self-contained $selfContainedValue `

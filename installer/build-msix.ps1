@@ -114,11 +114,19 @@ $signTool = Find-Tool "signtool.exe"
 if (-not $makeAppx) { throw "makeappx.exe not found. Install Windows 10/11 SDK." }
 if (-not $signTool) { throw "signtool.exe not found. Install Windows 10/11 SDK." }
 
-Write-Host "==> Publishing Laplace CLI for MSIX staging..."
+Write-Host "==> Publishing Laplace CLI and desktop UI for MSIX staging..."
 if (Test-Path $publishDir) { Remove-Item -LiteralPath $publishDir -Recurse -Force }
 $selfContainedValue = if ($SelfContained) { "true" } else { "false" }
 
 & $dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
+    -c $Configuration `
+    -r $Runtime `
+    --self-contained $selfContainedValue `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -o $publishDir
+
+& $dotnet publish (Join-Path $repoRoot "src\Laplace.Desktop\Laplace.Desktop.csproj") `
     -c $Configuration `
     -r $Runtime `
     --self-contained $selfContainedValue `

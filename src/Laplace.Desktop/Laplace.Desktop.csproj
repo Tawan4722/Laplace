@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Laplace.Desktop</RootNamespace>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>..\..\assets\laplace-logo.ico</ApplicationIcon>
+    <AssemblyName>laplace-gui</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Laplace.Core\Laplace.Core.csproj" />
+    <ProjectReference Include="..\Laplace.Compression\Laplace.Compression.csproj" />
+  </ItemGroup>
+</Project>

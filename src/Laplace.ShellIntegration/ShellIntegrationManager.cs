@@ -10,7 +10,7 @@ public sealed class ShellIntegrationManager
     private const string Extension = ".lpc";
     private const string ProgId = "Laplace.Archive";
 
-    public void Install(string cliExecutablePath)
+    public void Install(string cliExecutablePath, string? guiExecutablePath = null)
     {
         if (string.IsNullOrWhiteSpace(cliExecutablePath))
         {
@@ -19,6 +19,8 @@ public sealed class ShellIntegrationManager
 
         var fullCliPath = Path.GetFullPath(cliExecutablePath);
         var quotedCli = Quote(fullCliPath);
+        var fullGuiPath = string.IsNullOrWhiteSpace(guiExecutablePath) ? ResolveSiblingGui(fullCliPath) : Path.GetFullPath(guiExecutablePath);
+        var quotedGui = File.Exists(fullGuiPath) ? Quote(fullGuiPath) : quotedCli;
         using var classes = Registry.CurrentUser.CreateSubKey(ClassesRoot, writable: true)
             ?? throw new InvalidOperationException("Cannot open HKCU\\Software\\Classes.");
 
@@ -32,10 +34,10 @@ public sealed class ShellIntegrationManager
         {
             prog?.SetValue(string.Empty, "Laplace Archive");
             using var icon = prog?.CreateSubKey("DefaultIcon", writable: true);
-            icon?.SetValue(string.Empty, $"{quotedCli},0");
+            icon?.SetValue(string.Empty, $"{quotedGui},0");
         }
 
-        RegisterVerb(classes, $"{ProgId}\\shell\\open", "Open with Laplace", $"{quotedCli} open \"%1\"");
+        RegisterVerb(classes, $"{ProgId}\\shell\\open", "Open with Laplace", $"{quotedGui} --open \"%1\"");
         RegisterVerb(classes, $"{ProgId}\\shell\\extract_here", "Extract Here", $"{quotedCli} extract-here \"%1\"");
         RegisterVerb(classes, $"{ProgId}\\shell\\extract_named", "Extract to <archive_name>\\", $"{quotedCli} extract-to-named-folder \"%1\"");
         RegisterVerb(classes, $"{ProgId}\\shell\\extract_to", "Extract to...", $"{quotedCli} extract-to-named-folder \"%1\"");
@@ -43,9 +45,9 @@ public sealed class ShellIntegrationManager
         RegisterVerb(classes, $"{ProgId}\\shell\\archive_info", "Archive info", $"{quotedCli} info \"%1\"");
 
         RegisterVerb(classes, @"*\shell\laplace_add_quick", "Add to \"<name>.lpc\"", $"{quotedCli} compress \"%1\" \"%1.lpc\" --mode balanced");
-        RegisterVerb(classes, @"*\shell\laplace_add_dialog", "Add to .lpc archive...", $"{quotedCli} compress-dialog \"%1\"");
+        RegisterVerb(classes, @"*\shell\laplace_add_dialog", "Add to .lpc archive...", $"{quotedGui} --add \"%1\"");
         RegisterVerb(classes, @"Directory\shell\laplace_add_quick", "Add to \"<name>.lpc\"", $"{quotedCli} compress \"%1\" \"%1.lpc\" --mode balanced");
-        RegisterVerb(classes, @"Directory\shell\laplace_add_dialog", "Add to .lpc archive...", $"{quotedCli} compress-dialog \"%1\"");
+        RegisterVerb(classes, @"Directory\shell\laplace_add_dialog", "Add to .lpc archive...", $"{quotedGui} --add \"%1\"");
     }
 
     public void Uninstall()
@@ -112,6 +114,12 @@ public sealed class ShellIntegrationManager
     }
 
     private static string Quote(string value) => $"\"{value}\"";
+
+    private static string ResolveSiblingGui(string cliPath)
+    {
+        var directory = Path.GetDirectoryName(cliPath) ?? string.Empty;
+        return Path.Combine(directory, "laplace-gui.exe");
+    }
 }
 
 public sealed class ShellIntegrationStatus
