@@ -51,7 +51,13 @@ public sealed class ArchiveExtractor
         try
         {
             Directory.CreateDirectory(destinationFolder);
-            await using var archiveStream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, useAsync: true);
+            await using var archiveStream = new FileStream(
+                archivePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                1 << 20,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
 
             foreach (var entry in targets)
             {
@@ -76,7 +82,13 @@ public sealed class ArchiveExtractor
                     throw new IOException($"File already exists: {outPath}. Use overwrite mode to replace.");
                 }
 
-                await using var output = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20, useAsync: true);
+                await using var output = new FileStream(
+                    outPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None,
+                    1 << 20,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 
                 if (!blocksByFileId.TryGetValue(entry.EntryId, out var fileBlocks))
@@ -84,7 +96,7 @@ public sealed class ArchiveExtractor
                     fileBlocks = [];
                 }
 
-                foreach (var block in fileBlocks.OrderBy(b => b.BlockId))
+                foreach (var block in fileBlocks)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 

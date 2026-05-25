@@ -64,8 +64,14 @@ public static class ArchiveValidator
 
     public static void ValidateBlockEntries(IEnumerable<BlockEntryRecord> blocks, long archiveLength, ArchiveHeader? header = null)
     {
+        var expectedBlockId = 0L;
         foreach (var block in blocks)
         {
+            if (block.BlockId != expectedBlockId)
+            {
+                throw new LaplaceArchiveException($"Unexpected block table order at block #{block.BlockId}.");
+            }
+
             if (block.DataOffset < 0 || block.CompressedBlockSize < 0 || block.OriginalBlockSize < 0)
             {
                 throw new LaplaceArchiveException($"Invalid block sizing for block #{block.BlockId}.");
@@ -88,6 +94,8 @@ public static class ArchiveValidator
             {
                 throw new LaplaceArchiveException($"Invalid encryption metadata for block #{block.BlockId}.");
             }
+
+            expectedBlockId++;
         }
     }
 }

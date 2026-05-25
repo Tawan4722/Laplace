@@ -149,9 +149,11 @@ public sealed class ArchiveRoundTripTests
             VerifyAfterCompression = false
         });
 
+        var archive = new ArchiveReader().Read(archivePath);
+        var blockToCorrupt = Assert.Single(archive.BlockEntries);
         using (var fs = new FileStream(archivePath, FileMode.Open, FileAccess.ReadWrite))
         {
-            fs.Position = fs.Length / 2;
+            fs.Position = blockToCorrupt.DataOffset + blockToCorrupt.CompressedBlockSize / 2;
             var b = fs.ReadByte();
             fs.Position -= 1;
             fs.WriteByte((byte)(b ^ 0xFF));

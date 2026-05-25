@@ -63,7 +63,13 @@ public sealed class ArchiveWriter
             var totalBytes = sorted.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
             long processedBytes = 0;
 
-            await using var archiveStream = new FileStream(outputArchivePath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 20, useAsync: true);
+            await using var archiveStream = new FileStream(
+                outputArchivePath,
+                FileMode.Create,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                1 << 20,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
             header.DataSectionOffset = ArchiveFormatCodec.WriteHeader(archiveStream, header);
 
             foreach (var sourceEntry in sorted)
@@ -84,10 +90,17 @@ public sealed class ArchiveWriter
                 }
 
                 fileEntry.FirstBlockIndex = blockEntries.Count;
-                using var fs = new FileStream(sourceEntry.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, options.BlockSizeBytes, useAsync: true);
+                using var fs = new FileStream(
+                    sourceEntry.FullPath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    options.BlockSizeBytes,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
                 using var incrementalHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 var methodsUsed = new HashSet<CompressionMethod>();
                 var buffer = new byte[options.BlockSizeBytes];
+                CompressionMethod? preferredFileMethod = null;
 
                 while (true)
                 {
@@ -99,7 +112,7 @@ public sealed class ArchiveWriter
                     }
 
                     incrementalHash.AppendData(buffer, 0, bytesRead);
-                    var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options.Mode, buffer, bytesRead);
+                    var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options.Mode, buffer, bytesRead, ref preferredFileMethod);
                     var compressor = _compressorRegistry.GetCompressor(outputMethod);
                     methodsUsed.Add(outputMethod);
 
@@ -215,7 +228,8 @@ public sealed class ArchiveWriter
         string relativePath,
         CompressionMode mode,
         byte[] blockBuffer,
-        int blockLength)
+        int blockLength,
+        ref CompressionMethod? preferredFileMethod)
     {
         var blockData = blockBuffer.AsSpan(0, blockLength);
         if (blockData.Length == 0)
@@ -225,11 +239,42 @@ public sealed class ArchiveWriter
 
         var sample = blockData[..Math.Min(blockData.Length, 64 * 1024)];
         var analysis = _adaptiveCompressionEngine.Analyze(relativePath, sample);
-        var candidates = _adaptiveCompressionEngine.GetCandidates(mode, analysis);
+        var bestMethod = preferredFileMethod ?? SelectPreferredMethod(mode, analysis, sample);
+        preferredFileMethod ??= bestMethod;
+
+        if (bestMethod == CompressionMethod.Raw)
+        {
+            return (CompressionMethod.Raw, blockData.ToArray(), true);
+        }
+
+        byte[] compressed;
+        try
+        {
+            compressed = CompressBlock(bestMethod, blockData);
+        }
+        catch
+        {
+            return (CompressionMethod.Raw, blockData.ToArray(), true);
+        }
+
+        if (compressed.Length >= blockData.Length)
+        {
+            return (CompressionMethod.Raw, blockData.ToArray(), true);
+        }
+
+        return (bestMethod, compressed, false);
+    }
+
+    private CompressionMethod SelectPreferredMethod(CompressionMode mode, CompressionAnalysis analysis, ReadOnlySpan<byte> sample)
+    {
+        if (analysis.LikelyAlreadyCompressed)
+        {
+            return CompressionMethod.Raw;
+        }
 
         var bestMethod = CompressionMethod.Raw;
         var bestScore = double.MinValue;
-        foreach (var candidate in candidates.Distinct())
+        foreach (var candidate in _adaptiveCompressionEngine.GetCandidates(mode, analysis).Distinct())
         {
             if (candidate == CompressionMethod.Raw)
             {
@@ -248,7 +293,6 @@ public sealed class ArchiveWriter
                     estimatedRelativeSpeed: EstimateRelativeSpeed(candidate),
                     estimatedRelativeMemoryUse: EstimateRelativeMemoryUse(candidate));
 
-                // Strong penalty for sample expansion.
                 if (ratio >= 1.0)
                 {
                     score -= 0.45;
@@ -262,22 +306,11 @@ public sealed class ArchiveWriter
             }
             catch
             {
-                // Skip unavailable method and continue evaluating.
+                // Skip unavailable methods and continue evaluating.
             }
         }
 
-        if (bestMethod == CompressionMethod.Raw)
-        {
-            return (CompressionMethod.Raw, blockData.ToArray(), true);
-        }
-
-        var compressed = CompressBlock(bestMethod, blockData);
-        if (compressed.Length >= blockData.Length)
-        {
-            return (CompressionMethod.Raw, blockData.ToArray(), true);
-        }
-
-        return (bestMethod, compressed, false);
+        return bestMethod;
     }
 
     private static double EstimateRelativeSpeed(CompressionMethod method)

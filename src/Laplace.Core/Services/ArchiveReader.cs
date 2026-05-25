@@ -41,7 +41,7 @@ public sealed class ArchiveReader
     public static Dictionary<long, List<BlockEntryRecord>> BuildBlockLookup(ArchiveDocument archive)
     {
         var map = new Dictionary<long, List<BlockEntryRecord>>();
-        foreach (var block in archive.BlockEntries.OrderBy(b => b.BlockId))
+        foreach (var block in archive.BlockEntries)
         {
             if (!map.TryGetValue(block.OwningFileEntryId, out var list))
             {

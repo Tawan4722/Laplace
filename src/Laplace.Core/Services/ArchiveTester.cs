@@ -50,7 +50,13 @@ public sealed class ArchiveTester
 
         try
         {
-            await using var archiveStream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, useAsync: true);
+            await using var archiveStream = new FileStream(
+                archivePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                1 << 20,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
 
             foreach (var file in files)
             {
@@ -62,7 +68,7 @@ public sealed class ArchiveTester
                     fileBlocks = [];
                 }
 
-                foreach (var block in fileBlocks.OrderBy(b => b.BlockId))
+                foreach (var block in fileBlocks)
                 {
                     archiveStream.Position = block.DataOffset;
                     var compressedBytes = new byte[block.CompressedBlockSize];
