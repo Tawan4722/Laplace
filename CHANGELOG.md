@@ -2,6 +2,13 @@
 
 All notable changes to Laplace will be documented here.
 
+## 1.3.0
+
+- Improved adaptive compression analysis with pattern reuse, text ratio, and zero-byte signals.
+- Reworked block selection so mixed files can store incompressible blocks raw while compressing later compressible blocks.
+- Stopped forcing broad media/document categories to raw without testing the actual bytes, improving results for compressible formats such as simple `.bmp` and `.wav` files.
+- Added regression coverage for compressible media-like files and mixed random/repeated block files.
+
 ## 1.2.0
 
 - Reworked Explorer integration into a branded `Laplace` cascade submenu for archive and create actions.

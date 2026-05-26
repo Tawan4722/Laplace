@@ -118,6 +118,48 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public async Task CompressibleMediaExtension_IsTestedInsteadOfForcedRaw()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "flat-color.bmp");
+        var data = new byte[512 * 1024];
+        await File.WriteAllBytesAsync(sourceFile, data);
+        var archivePath = Path.Combine(root, "bitmap.lpc");
+
+        var writer = new ArchiveWriter(new CompressorRegistry());
+        var archive = await writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Auto,
+            BlockSizeBytes = 256 * 1024
+        });
+
+        Assert.Contains(archive.BlockEntries, b => !b.IsRaw && b.CompressionMethod != CompressionMethod.Raw);
+        Assert.True(archive.BlockEntries.Sum(b => b.CompressedBlockSize) < data.Length);
+    }
+
+    [Fact]
+    public async Task MixedFile_ReevaluatesCompressionForLaterBlocks()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "mixed.bin");
+        var random = new byte[128 * 1024];
+        Random.Shared.NextBytes(random);
+        var repeated = Enumerable.Repeat((byte)'A', 128 * 1024).ToArray();
+        await File.WriteAllBytesAsync(sourceFile, random.Concat(repeated).ToArray());
+        var archivePath = Path.Combine(root, "mixed.lpc");
+
+        var writer = new ArchiveWriter(new CompressorRegistry());
+        var archive = await writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Auto,
+            BlockSizeBytes = 128 * 1024
+        });
+
+        Assert.Contains(archive.BlockEntries, b => b.IsRaw || b.CompressionMethod == CompressionMethod.Raw);
+        Assert.Contains(archive.BlockEntries, b => !b.IsRaw && b.CompressionMethod != CompressionMethod.Raw);
+    }
+
+    [Fact]
     public void PathSecurity_BlocksTraversal()
     {
         var destination = Path.Combine(Path.GetTempPath(), "laplace-security-test");
