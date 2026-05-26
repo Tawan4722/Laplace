@@ -2,6 +2,13 @@
 
 All notable changes to Laplace will be documented here.
 
+## 1.2.0
+
+- Reworked Explorer integration into a branded `Laplace` cascade submenu for archive and create actions.
+- Added archive context actions for supported formats without taking over the default app for non-`.lpc` archives.
+- Added `compress-beside` so quick-create actions name archives from the selected item, for example `report.pdf` -> `report.lpc`, while keeping original file names inside the archive.
+- Added `extract-dialog` and GUI `--extract` startup support for context-menu extraction with options.
+
 ## 1.1.0
 
 - Added a Windows desktop archive-manager UI with RAR-style menus, toolbar actions, archive path bar, file listing, and status bar.

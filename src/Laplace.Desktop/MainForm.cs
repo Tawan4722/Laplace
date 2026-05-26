@@ -523,6 +523,17 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (string.Equals(first, "--extract", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            await LoadArchiveAsync(args[1], null).ConfigureAwait(true);
+            if (_currentArchivePath is not null)
+            {
+                await ShowExtractDialogAsync().ConfigureAwait(true);
+            }
+
+            return;
+        }
+
         if (string.Equals(first, "--open", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
         {
             first = args[1];

@@ -44,6 +44,7 @@ internal static class Program
             return command switch
             {
                 "compress" => await CompressAsync(archives, remaining).ConfigureAwait(false),
+                "compress-beside" => await CompressBesideAsync(archives, remaining).ConfigureAwait(false),
                 "extract" => await ExtractAsync(archives, remaining).ConfigureAwait(false),
                 "list" => await ListAsync(archives, remaining).ConfigureAwait(false),
                 "info" => await InfoAsync(archives, remaining).ConfigureAwait(false),
@@ -53,6 +54,7 @@ internal static class Program
                 "extract-here" => await ExtractHereAsync(archives, remaining).ConfigureAwait(false),
                 "extract-to-folder" => await ExtractToFolderAsync(archives, remaining).ConfigureAwait(false),
                 "extract-to-named-folder" => await ExtractToNamedFolderAsync(archives, remaining).ConfigureAwait(false),
+                "extract-dialog" => ExtractDialogCommand(remaining),
                 "compress-dialog" => CompressDialogCommand(remaining),
                 "integrate" => IntegrateCommand(remaining),
                 _ => UnknownCommand(command)
@@ -103,6 +105,53 @@ internal static class Program
         Console.WriteLine($"Compressing {inputPaths.Length} input path(s) -> '{outputPath}'");
 
         await archives.CompressAsync(inputPaths, outputPath, options, ProgressToConsole()).ConfigureAwait(false);
+        stopwatch.Stop();
+
+        var info = archives.Info(outputPath, options.Password);
+        Console.WriteLine();
+        Console.WriteLine("Compression completed.");
+        PrintSizeStats(info.OriginalSize, info.CompressedSize, stopwatch.Elapsed);
+
+        if (options.VerifyAfterCompression)
+        {
+            var testResult = await archives.TestAsync(outputPath, options.Password).ConfigureAwait(false);
+            Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> CompressBesideAsync(UniversalArchiveService archives, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace compress-beside <input_path> [options] [--encrypt|--password <value>|--password-file <path>]");
+            return 1;
+        }
+
+        var inputPath = Path.GetFullPath(args[0]);
+        if (!File.Exists(inputPath) && !Directory.Exists(inputPath))
+        {
+            Console.Error.WriteLine($"Input path not found: {inputPath}");
+            return 1;
+        }
+
+        var optionArgs = args.Skip(1).ToArray();
+        var outputPath = ResolveBesideArchivePath(inputPath);
+        var options = ParseCreateOptions(optionArgs);
+        var passwordOptions = ParsePasswordOptions(optionArgs);
+        if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
+        {
+            options.Password = await ResolvePasswordAsync(
+                passwordOptions,
+                new PasswordRequest(outputPath, "Create archive", IsWrite: true),
+                requirePassword: true).ConfigureAwait(false);
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        Console.WriteLine($"Compressing '{inputPath}' -> '{outputPath}'");
+
+        await archives.CompressAsync([inputPath], outputPath, options, ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
         var info = archives.Info(outputPath, options.Password);
@@ -566,6 +615,7 @@ internal static class Program
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Commands:");
         Console.WriteLine("  laplace compress <input_path...> <output.lpc|output.zip> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace info <input_archive> [--password <value>|--password-file <path>]");
@@ -575,6 +625,7 @@ internal static class Program
         Console.WriteLine("  laplace extract-here <archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace extract-dialog <archive>");
         Console.WriteLine("  laplace integrate install|uninstall|status [--cli-path <path-to-laplace.exe>]");
     }
 
@@ -636,6 +687,48 @@ internal static class Program
 
         var mbps = bytes / elapsed.TotalSeconds / (1024d * 1024d);
         return $"{mbps:F2} MB/s";
+    }
+
+    private static string ResolveBesideArchivePath(string inputPath)
+    {
+        var fullPath = Path.GetFullPath(inputPath);
+        var parent = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            parent = Directory.GetCurrentDirectory();
+        }
+
+        var name = Directory.Exists(fullPath)
+            ? new DirectoryInfo(fullPath).Name
+            : Path.GetFileNameWithoutExtension(fullPath);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        }
+
+        return GetAvailableArchivePath(Path.Combine(parent, $"{name}.lpc"));
+    }
+
+    private static string GetAvailableArchivePath(string preferredPath)
+    {
+        if (!File.Exists(preferredPath) && !Directory.Exists(preferredPath))
+        {
+            return preferredPath;
+        }
+
+        var directory = Path.GetDirectoryName(preferredPath) ?? Directory.GetCurrentDirectory();
+        var name = Path.GetFileNameWithoutExtension(preferredPath);
+        var extension = Path.GetExtension(preferredPath);
+        for (var i = 2; i < 10_000; i++)
+        {
+            var candidate = Path.Combine(directory, $"{name} ({i}){extension}");
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new IOException($"Could not find an available archive name beside: {preferredPath}");
     }
 
     private static int OpenCommand(string[] args)
@@ -744,6 +837,23 @@ internal static class Program
 
         Console.WriteLine("Laplace desktop UI was not found next to the CLI.");
         Console.WriteLine($"Selected arguments: {string.Join(" ", args)}");
+        return 0;
+    }
+
+    private static int ExtractDialogCommand(string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace extract-dialog <archive>");
+            return 1;
+        }
+
+        if (TryLaunchDesktop(["--extract", args[0]]))
+        {
+            return 0;
+        }
+
+        Console.WriteLine("Laplace desktop UI was not found next to the CLI. Use `laplace extract-here` or `laplace extract-to-folder` instead.");
         return 0;
     }
 
