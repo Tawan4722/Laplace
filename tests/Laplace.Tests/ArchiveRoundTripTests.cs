@@ -160,6 +160,45 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public async Task Estimate_CompressibleFile_PredictsSmallerArchive()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "flat-color.bmp");
+        await File.WriteAllBytesAsync(sourceFile, new byte[1024 * 1024]);
+
+        var service = new UniversalArchiveService(new CompressorRegistry());
+        var estimate = await service.EstimateAsync([sourceFile], new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Auto,
+            VerifyAfterCompression = false
+        });
+
+        Assert.Equal(1024 * 1024, estimate.OriginalSize);
+        Assert.True(estimate.EstimatedCompressedSize < estimate.OriginalSize / 10);
+        Assert.Contains(estimate.LikelyMethods, method => method != CompressionMethod.Raw.ToString());
+    }
+
+    [Fact]
+    public async Task Estimate_RandomFile_PredictsLittleOrNoReduction()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "random.bin");
+        var data = new byte[512 * 1024];
+        Random.Shared.NextBytes(data);
+        await File.WriteAllBytesAsync(sourceFile, data);
+
+        var service = new UniversalArchiveService(new CompressorRegistry());
+        var estimate = await service.EstimateAsync([sourceFile], new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Auto,
+            VerifyAfterCompression = false
+        });
+
+        Assert.True(estimate.EstimatedRatio > 0.95);
+        Assert.Contains(CompressionMethod.Raw.ToString(), estimate.LikelyMethods);
+    }
+
+    [Fact]
     public void PathSecurity_BlocksTraversal()
     {
         var destination = Path.Combine(Path.GetTempPath(), "laplace-security-test");
@@ -280,6 +319,53 @@ public sealed class ArchiveRoundTripTests
         Assert.Equal(
             await File.ReadAllTextAsync(Path.Combine(sourceDir, "secret.txt")),
             await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "secret.txt")));
+    }
+
+    [Fact]
+    public async Task SevenZip_CompressThenExtract_RoundTrips()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        var nestedDir = Path.Combine(sourceDir, "nested");
+        Directory.CreateDirectory(nestedDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "alpha.txt"), string.Join(Environment.NewLine, Enumerable.Repeat("alpha", 200)));
+        await File.WriteAllTextAsync(Path.Combine(nestedDir, "beta.txt"), string.Join(Environment.NewLine, Enumerable.Repeat("beta", 200)));
+        var archivePath = Path.Combine(root, "payload.7z");
+        var extractPath = Path.Combine(root, "out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Maximum,
+            VerifyAfterCompression = false
+        });
+
+        var info = service.Info(archivePath);
+        Assert.Equal("7Z", info.Format);
+        Assert.True(info.CompressedSize > 0);
+        Assert.True((await service.TestAsync(archivePath)).Success);
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(sourceDir, "alpha.txt")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "alpha.txt")));
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(nestedDir, "beta.txt")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "nested", "beta.txt")));
+    }
+
+    [Fact]
+    public void DetectReadKind_UsesSevenZipAndRarMagicBeforeExtension()
+    {
+        var root = CreateTempFolder();
+        var sevenZipPath = Path.Combine(root, "misnamed.lpc");
+        File.WriteAllBytes(sevenZipPath, [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0x00, 0x04]);
+        var rarPath = Path.Combine(root, "misnamed.zip");
+        File.WriteAllBytes(rarPath, [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]);
+
+        Assert.Equal(SupportedArchiveKind.SevenZip, ArchiveFormatDetector.DetectReadKind(sevenZipPath));
+        Assert.Equal(SupportedArchiveKind.Rar, ArchiveFormatDetector.DetectReadKind(rarPath));
     }
 
     [Fact]

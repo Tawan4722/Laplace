@@ -9,7 +9,7 @@ It is implemented in C#/.NET end-to-end. The native `.lpc` format is not a wrapp
 ## What It Does
 
 - Creates native `.lpc` archives with adaptive per-block compression.
-- Creates `.zip` archives, including AES-256 encrypted ZIP output.
+- Creates `.zip`, `.7z`, and `.rar` archives, including AES-256 encrypted ZIP output.
 - Extracts, lists, inspects, and tests common archive formats.
 - Supports password-protected `.lpc` and `.zip` archives.
 - Provides a branded Windows Explorer context submenu for archive extraction, testing, inspection, and `.lpc` creation helpers.
@@ -21,13 +21,15 @@ Create/write:
 
 - `.lpc`
 - `.zip`
+- `.7z`
+- `.rar` with WinRAR/RAR command-line tools installed
 
 Read, list, info, test, and extract:
 
 - `.lpc`
 - `.zip`
 - `.7z`
-- `.rar` read-only
+- `.rar`
 - `.tar`
 - `.tar.gz`, `.tgz`
 - `.tar.bz2`, `.tbz2`
@@ -150,7 +152,7 @@ laplace <command>
 ### Compress
 
 ```powershell
-laplace compress <input_path...> <output.lpc|output.zip> `
+laplace compress <input_path...> <output.lpc|output.zip|output.7z|output.rar> `
   --mode fast|balanced|maximum|auto `
   --block-size 4M|8M|16M|32M|64M `
   --solid on|off|auto `
@@ -161,13 +163,26 @@ laplace compress <input_path...> <output.lpc|output.zip> `
 Examples:
 
 ```powershell
+laplace estimate .\folder --mode auto
 laplace compress .\folder .\archive.lpc --mode balanced --verify
 laplace compress-beside .\report.pdf --mode balanced
 laplace compress .\folder .\archive.zip --mode maximum
+laplace compress .\folder .\archive.7z --mode maximum
+laplace compress .\folder .\archive.rar --mode maximum
 laplace compress .\folder .\secure.lpc --encrypt
 laplace compress .\folder .\secure.zip --password "secret"
 laplace compress .\folder .\secure.lpc --password-file .\password.txt
 ```
+
+### Estimate
+
+```powershell
+laplace estimate <input_path...> `
+  --mode fast|balanced|maximum|auto `
+  --block-size 4M|8M|16M|32M|64M
+```
+
+The estimate command samples selected files, trial-compresses representative chunks, and reports estimated archive size, reduction percentage, confidence, and likely methods before creating an archive.
 
 ### Extract
 

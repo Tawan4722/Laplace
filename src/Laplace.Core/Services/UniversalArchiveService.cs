@@ -9,7 +9,10 @@ public sealed class UniversalArchiveService
     private readonly ArchiveReader _lpcReader;
     private readonly ArchiveExtractor _lpcExtractor;
     private readonly ArchiveTester _lpcTester;
+    private readonly ArchiveEstimator _estimator;
     private readonly ZipArchiveWriter _zipWriter = new();
+    private readonly SevenZipArchiveWriter _sevenZipWriter = new();
+    private readonly RarArchiveWriter _rarWriter = new();
     private readonly ZipArchiveHandler _zipHandler = new();
     private readonly SharpCompressArchiveHandler _externalHandler = new();
 
@@ -19,6 +22,7 @@ public sealed class UniversalArchiveService
         _lpcReader = new ArchiveReader();
         _lpcExtractor = new ArchiveExtractor(compressorRegistry, _lpcReader);
         _lpcTester = new ArchiveTester(compressorRegistry, _lpcReader);
+        _estimator = new ArchiveEstimator(compressorRegistry);
     }
 
     public async Task CompressAsync(
@@ -35,6 +39,12 @@ public sealed class UniversalArchiveService
                 return;
             case SupportedArchiveKind.Zip:
                 await _zipWriter.CreateAsync(inputPaths, outputArchivePath, options, progress, cancellationToken).ConfigureAwait(false);
+                return;
+            case SupportedArchiveKind.SevenZip:
+                await _sevenZipWriter.CreateAsync(inputPaths, outputArchivePath, options, progress, cancellationToken).ConfigureAwait(false);
+                return;
+            case SupportedArchiveKind.Rar:
+                await _rarWriter.CreateAsync(inputPaths, outputArchivePath, options, progress, cancellationToken).ConfigureAwait(false);
                 return;
             default:
                 throw new NotSupportedException("Unsupported write format.");
@@ -95,6 +105,15 @@ public sealed class UniversalArchiveService
     public bool IsEncrypted(string archivePath)
     {
         return Info(archivePath).IsEncrypted;
+    }
+
+    public Task<ArchiveEstimate> EstimateAsync(
+        IEnumerable<string> inputPaths,
+        CreateArchiveOptions options,
+        IProgress<ArchiveOperationProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        return _estimator.EstimateAsync(inputPaths, options, progress, cancellationToken);
     }
 
     private IReadOnlyList<ArchiveEntryListing> ListLpc(string archivePath)

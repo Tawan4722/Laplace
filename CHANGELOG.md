@@ -2,6 +2,14 @@
 
 All notable changes to Laplace will be documented here.
 
+## Unreleased
+
+## 1.4.0
+
+- Added `.7z` archive creation, fixed managed `.7z` read/extract/test paths, and added optional WinRAR/RAR CLI-backed `.rar` creation.
+- Added compression size estimation for CLI, desktop UI, and Explorer create-context actions.
+- Added sampled trial-compression estimates with confidence, likely methods, and approximate LPC metadata overhead.
+
 ## 1.3.0
 
 - Improved adaptive compression analysis with pattern reuse, text ratio, and zero-byte signals.

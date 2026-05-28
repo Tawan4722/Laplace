@@ -32,6 +32,7 @@ laplace integrate install --cli-path "C:\Program Files\Laplace\laplace.exe"
   - Show archive details
 - Archive menus are registered for `.lpc`, `.zip`, `.7z`, `.rar`, `.tar`, `.gz`, `.tgz`, `.bz2`, `.xz`, `.zst`, and `.lzip` without taking over the default app for non-`.lpc` formats.
 - A branded `Laplace` cascade menu for normal files, folders, and folder background:
+  - Estimate archive size
   - Create archive...
   - Create .lpc beside item
   - Create verified .lpc

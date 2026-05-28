@@ -148,6 +148,7 @@ public sealed class ShellIntegrationManager
             menuKey?.SetValue("AppliesTo", appliesTo);
         }
 
+        RegisterCascadeVerb(menuKey, "estimate", "Estimate archive size", $"{quotedGui} --estimate \"{targetPlaceholder}\"");
         RegisterCascadeVerb(menuKey, "create_options", "Create archive...", $"{quotedGui} --add \"{targetPlaceholder}\"");
         RegisterCascadeVerb(menuKey, "create_quick", "Create .lpc beside item", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced");
         RegisterCascadeVerb(menuKey, "create_quick_verified", "Create verified .lpc", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced --verify");

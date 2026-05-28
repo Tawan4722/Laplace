@@ -45,6 +45,7 @@ internal static class Program
             {
                 "compress" => await CompressAsync(archives, remaining).ConfigureAwait(false),
                 "compress-beside" => await CompressBesideAsync(archives, remaining).ConfigureAwait(false),
+                "estimate" => await EstimateAsync(archives, remaining).ConfigureAwait(false),
                 "extract" => await ExtractAsync(archives, remaining).ConfigureAwait(false),
                 "list" => await ListAsync(archives, remaining).ConfigureAwait(false),
                 "info" => await InfoAsync(archives, remaining).ConfigureAwait(false),
@@ -84,7 +85,7 @@ internal static class Program
 
         if (positional.Count < 2)
         {
-            Console.Error.WriteLine("Usage: laplace compress <input_path...> <output.lpc|output.zip> [options] [--encrypt|--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace compress <input_path...> <output.lpc|output.zip|output.7z|output.rar> [options] [--encrypt|--password <value>|--password-file <path>]");
             return 1;
         }
 
@@ -165,6 +166,35 @@ internal static class Program
             Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
         }
 
+        return 0;
+    }
+
+    private static async Task<int> EstimateAsync(UniversalArchiveService archives, string[] args)
+    {
+        var positional = new List<string>();
+        var optionStart = args.Length;
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i].StartsWith("--", StringComparison.Ordinal))
+            {
+                optionStart = i;
+                break;
+            }
+
+            positional.Add(args[i]);
+        }
+
+        if (positional.Count < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace estimate <input_path...> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
+            return 1;
+        }
+
+        var optionArgs = args.Skip(optionStart).ToArray();
+        var options = ParseCreateOptions(optionArgs);
+        Console.WriteLine($"Estimating {positional.Count} input path(s)...");
+        var estimate = await archives.EstimateAsync(positional, options).ConfigureAwait(false);
+        PrintArchiveEstimate(estimate);
         return 0;
     }
 
@@ -614,8 +644,9 @@ internal static class Program
     {
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> <output.lpc|output.zip> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress <input_path...> <output.lpc|output.zip|output.7z|output.rar> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
         Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace info <input_archive> [--password <value>|--password-file <path>]");
@@ -678,6 +709,24 @@ internal static class Program
         }
     }
 
+    private static void PrintArchiveEstimate(ArchiveEstimate estimate)
+    {
+        Console.WriteLine("Compression estimate:");
+        Console.WriteLine($"Files: {estimate.FileCount}");
+        Console.WriteLine($"Folders: {estimate.FolderCount}");
+        Console.WriteLine($"Original size: {estimate.OriginalSize} bytes ({FormatBytes(estimate.OriginalSize)})");
+        Console.WriteLine($"Estimated archive size: {estimate.EstimatedCompressedSize} bytes ({FormatBytes(estimate.EstimatedCompressedSize)})");
+        Console.WriteLine($"Estimated ratio: {estimate.EstimatedRatio:P2}");
+        Console.WriteLine($"Estimated reduction: {estimate.EstimatedReduction:P2}");
+        Console.WriteLine($"Sample count: {estimate.SampleCount}");
+        Console.WriteLine($"Confidence: {estimate.Confidence}");
+        Console.WriteLine($"Likely methods: {string.Join(", ", estimate.LikelyMethods)}");
+        if (!string.IsNullOrWhiteSpace(estimate.Notes))
+        {
+            Console.WriteLine($"Notes: {estimate.Notes}");
+        }
+    }
+
     private static string FormatSpeed(long bytes, TimeSpan elapsed)
     {
         if (elapsed.TotalSeconds <= 0.0001)
@@ -687,6 +736,20 @@ internal static class Program
 
         var mbps = bytes / elapsed.TotalSeconds / (1024d * 1024d);
         return $"{mbps:F2} MB/s";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return unit == 0 ? $"{bytes} B" : $"{value:F2} {units[unit]}";
     }
 
     private static string ResolveBesideArchivePath(string inputPath)

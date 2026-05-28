@@ -1,6 +1,8 @@
 using Laplace.Core.Exceptions;
 using Laplace.Core.Models;
 using Laplace.Core.Security;
+using SharpCompress.Archives;
+using SharpCompress.Common;
 using SharpCompress.Readers;
 
 namespace Laplace.Core.Services;
@@ -11,12 +13,11 @@ public sealed class SharpCompressArchiveHandler
     {
         try
         {
-            using var reader = ReaderFactory.OpenReader(archivePath, CreateReaderOptions(archivePath, password));
+            using var archive = ArchiveFactory.OpenArchive(archivePath, CreateReaderOptions(archivePath, password));
             var entries = new List<ArchiveEntryListing>();
             long index = 0;
-            while (reader.MoveToNextEntry())
+            foreach (var entry in archive.Entries)
             {
-                var entry = reader.Entry;
                 entries.Add(new ArchiveEntryListing
                 {
                     Id = index++,
@@ -47,6 +48,11 @@ public sealed class SharpCompressArchiveHandler
         var files = entries.Where(x => !x.IsDirectory).ToList();
         var originalSize = files.Sum(x => x.OriginalSize);
         var compressedSize = files.Sum(x => x.CompressedSize);
+        if (compressedSize == 0 && originalSize > 0 && File.Exists(archivePath))
+        {
+            compressedSize = new FileInfo(archivePath).Length;
+        }
+
         return new ArchiveSummary
         {
             Format = Path.GetExtension(archivePath).TrimStart('.').ToUpperInvariant(),
@@ -77,11 +83,10 @@ public sealed class SharpCompressArchiveHandler
 
         try
         {
-            using var reader = ReaderFactory.OpenReader(archivePath, CreateReaderOptions(archivePath, options.Password));
-            while (reader.MoveToNextEntry())
+            using var archive = ArchiveFactory.OpenArchive(archivePath, CreateReaderOptions(archivePath, options.Password));
+            foreach (var entry in archive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var entry = reader.Entry;
                 if (!string.IsNullOrWhiteSpace(entry.LinkTarget))
                 {
                     throw new InvalidDataException($"Archive links are not extracted for safety: {entry.Key}");
@@ -111,7 +116,7 @@ public sealed class SharpCompressArchiveHandler
                     throw new IOException($"File already exists: {outPath}. Use overwrite mode to replace.");
                 }
 
-                await using var input = reader.OpenEntryStream();
+                await using var input = entry.OpenEntryStream();
                 await using var output = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20, useAsync: true);
                 var buffer = new byte[128 * 1024];
                 while (true)
@@ -148,15 +153,14 @@ public sealed class SharpCompressArchiveHandler
     {
         try
         {
-            using var reader = ReaderFactory.OpenReader(archivePath, CreateReaderOptions(archivePath, password));
+            using var archive = ArchiveFactory.OpenArchive(archivePath, CreateReaderOptions(archivePath, password));
             var files = 0;
             var entries = 0;
             var buffer = new byte[128 * 1024];
-            while (reader.MoveToNextEntry())
+            foreach (var entry in archive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 entries++;
-                var entry = reader.Entry;
                 if (entry.IsDirectory)
                 {
                     continue;
@@ -167,7 +171,7 @@ public sealed class SharpCompressArchiveHandler
                     return ArchiveTestResult.Failed($"Archive requires a password: {archivePath}");
                 }
 
-                await using var input = reader.OpenEntryStream();
+                await using var input = entry.OpenEntryStream();
                 while (await input.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false) > 0)
                 {
                 }
@@ -221,7 +225,7 @@ public sealed class SharpCompressArchiveHandler
 
     private static bool IsUnsupportedArchiveFailure(Exception ex)
     {
-        return ex is InvalidOperationException or InvalidDataException or NotSupportedException ||
+        return ex is InvalidFormatException or InvalidOperationException or InvalidDataException or NotSupportedException ||
                ex.Message.Contains("Cannot determine", StringComparison.OrdinalIgnoreCase) ||
                ex.Message.Contains("No factory", StringComparison.OrdinalIgnoreCase);
     }

@@ -60,6 +60,7 @@ public sealed class MainForm : Form
         var file = new ToolStripMenuItem("&File");
         file.DropDownItems.Add("&Open archive...", null, async (_, _) => await ChooseAndOpenArchiveAsync().ConfigureAwait(true));
         file.DropDownItems.Add("&Create archive...", null, async (_, _) => await ShowCreateDialogAsync([]).ConfigureAwait(true));
+        file.DropDownItems.Add("&Estimate compression...", null, async (_, _) => await ChooseAndEstimateAsync().ConfigureAwait(true));
         file.DropDownItems.Add(new ToolStripSeparator());
         file.DropDownItems.Add("E&xit", null, (_, _) => Close());
 
@@ -101,6 +102,7 @@ public sealed class MainForm : Form
         };
 
         toolbar.Items.Add(CreateToolButton("Add", SystemIcons.Application, async (_, _) => await ShowCreateDialogAsync([]).ConfigureAwait(true)));
+        toolbar.Items.Add(CreateToolButton("Estimate", SystemIcons.Information, async (_, _) => await ChooseAndEstimateAsync().ConfigureAwait(true)));
         _extractButton.Text = "Extract";
         _extractButton.Image = SystemIcons.Shield.ToBitmap();
         _extractButton.TextImageRelation = TextImageRelation.ImageAboveText;
@@ -322,6 +324,61 @@ public sealed class MainForm : Form
         }
     }
 
+    private async Task ChooseAndEstimateAsync()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Estimate compression",
+            Filter = "All files|*.*",
+            Multiselect = true,
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            await ShowEstimateAsync(dialog.FileNames).ConfigureAwait(true);
+        }
+    }
+
+    private async Task ShowEstimateAsync(IEnumerable<string> inputPaths)
+    {
+        var paths = inputPaths.Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
+        if (paths.Length == 0)
+        {
+            ShowValidation("Choose at least one file or folder to estimate.");
+            return;
+        }
+
+        try
+        {
+            SetBusy(true);
+            SetStatus("Estimating compression...", 0);
+            var progress = new Progress<ArchiveOperationProgress>(p =>
+            {
+                var percent = Math.Clamp((int)Math.Round(p.Percent), 0, 100);
+                SetStatus(string.IsNullOrWhiteSpace(p.CurrentItem) ? "Estimating compression..." : p.CurrentItem, percent);
+            });
+
+            var estimate = await _archives.EstimateAsync(paths, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Auto,
+                BlockSizeBytes = 8 * 1024 * 1024,
+                VerifyAfterCompression = false
+            }, progress).ConfigureAwait(true);
+
+            SetStatus("Compression estimate ready.", 100);
+            MessageBox.Show(this, FormatEstimate(estimate), "Compression estimate", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
     private async Task ShowExtractDialogAsync()
     {
         if (_currentArchivePath is null)
@@ -534,6 +591,12 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (string.Equals(first, "--estimate", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            await ShowEstimateAsync(args.Skip(1)).ConfigureAwait(true);
+            return;
+        }
+
         if (string.Equals(first, "--open", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
         {
             first = args[1];
@@ -584,6 +647,24 @@ public sealed class MainForm : Form
             $"Methods: {methods}",
             info.Notes
         };
+        return string.Join(Environment.NewLine, lines.Where(line => !string.IsNullOrWhiteSpace(line)));
+    }
+
+    private static string FormatEstimate(ArchiveEstimate estimate)
+    {
+        var lines = new[]
+        {
+            $"Files: {estimate.FileCount}",
+            $"Folders: {estimate.FolderCount}",
+            $"Original size: {FormatBytes(estimate.OriginalSize)}",
+            $"Estimated archive size: {FormatBytes(estimate.EstimatedCompressedSize)}",
+            $"Estimated ratio: {estimate.EstimatedRatio:P2}",
+            $"Estimated reduction: {estimate.EstimatedReduction:P2}",
+            $"Confidence: {estimate.Confidence}",
+            $"Likely methods: {string.Join(", ", estimate.LikelyMethods)}",
+            estimate.Notes
+        };
+
         return string.Join(Environment.NewLine, lines.Where(line => !string.IsNullOrWhiteSpace(line)));
     }
 
@@ -783,7 +864,7 @@ internal sealed class CreateArchiveDialog : Form
         using var dialog = new SaveFileDialog
         {
             Title = "Archive name",
-            Filter = "Laplace archive (*.lpc)|*.lpc|ZIP archive (*.zip)|*.zip",
+            Filter = "Laplace archive (*.lpc)|*.lpc|ZIP archive (*.zip)|*.zip|7-Zip archive (*.7z)|*.7z|WinRAR archive (*.rar)|*.rar",
             AddExtension = true,
             DefaultExt = "lpc",
             FileName = string.IsNullOrWhiteSpace(_output.Text) ? DefaultArchiveName() : _output.Text
