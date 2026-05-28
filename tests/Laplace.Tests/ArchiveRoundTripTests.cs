@@ -368,6 +368,40 @@ public sealed class ArchiveRoundTripTests
         Assert.Equal(SupportedArchiveKind.Rar, ArchiveFormatDetector.DetectReadKind(rarPath));
     }
 
+    [WindowsOnlyFact]
+    public async Task WindowsNativeArchiveHandler_ExtractsZipArchive()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        Directory.CreateDirectory(sourceDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "native.txt"), "windows native extraction");
+        var archivePath = Path.Combine(root, "payload.zip");
+        var extractPath = Path.Combine(root, "native-out");
+        await using (var file = File.Create(archivePath))
+        using (var zip = new ZipOutputStream(file))
+        {
+            await zip.PutNextEntryAsync(new ZipEntry("payload/"), CancellationToken.None);
+            await zip.CloseEntryAsync(CancellationToken.None);
+            await zip.PutNextEntryAsync(new ZipEntry("payload/native.txt"), CancellationToken.None);
+            var bytes = "windows native extraction"u8.ToArray();
+            await zip.WriteAsync(bytes);
+            await zip.CloseEntryAsync(CancellationToken.None);
+            await zip.FinishAsync(CancellationToken.None);
+        }
+
+        var native = new WindowsNativeArchiveHandler();
+        if (!native.IsAvailable)
+        {
+            return;
+        }
+
+        await native.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(sourceDir, "native.txt")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "native.txt")));
+    }
+
     [Fact]
     public async Task ZipExtraction_BlocksTraversalEntry()
     {
@@ -394,5 +428,16 @@ public sealed class ArchiveRoundTripTests
         var folder = Path.Combine(Path.GetTempPath(), $"laplace-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         return folder;
+    }
+
+    private sealed class WindowsOnlyFactAttribute : FactAttribute
+    {
+        public WindowsOnlyFactAttribute()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                Skip = "Windows native archive extraction is only available on Windows.";
+            }
+        }
     }
 }

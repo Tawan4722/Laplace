@@ -15,6 +15,7 @@ public sealed class UniversalArchiveService
     private readonly RarArchiveWriter _rarWriter = new();
     private readonly ZipArchiveHandler _zipHandler = new();
     private readonly SharpCompressArchiveHandler _externalHandler = new();
+    private readonly WindowsNativeArchiveHandler _windowsNativeHandler = new();
 
     public UniversalArchiveService(ICompressorRegistry compressorRegistry)
     {
@@ -67,7 +68,7 @@ public sealed class UniversalArchiveService
                 await _zipHandler.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
                 return;
             default:
-                await _externalHandler.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
+                await ExtractExternalAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
                 return;
         }
     }
@@ -142,6 +143,23 @@ public sealed class UniversalArchiveService
                 };
             })
             .ToList();
+    }
+
+    private async Task ExtractExternalAsync(
+        string archivePath,
+        string destinationFolder,
+        ExtractArchiveOptions options,
+        IProgress<ArchiveOperationProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _externalHandler.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
+        }
+        catch (NotSupportedException) when (_windowsNativeHandler.IsAvailable && options.Password is null)
+        {
+            await _windowsNativeHandler.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private ArchiveSummary InfoLpc(string archivePath)

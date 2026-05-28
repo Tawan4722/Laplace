@@ -4,6 +4,10 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.4.1
+
+- Added Windows native archive extraction fallback through the inbox `tar.exe`/libarchive path when managed external extraction cannot read an archive.
+
 ## 1.4.0
 
 - Added `.7z` archive creation, fixed managed `.7z` read/extract/test paths, and added optional WinRAR/RAR CLI-backed `.rar` creation.

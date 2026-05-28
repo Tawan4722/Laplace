@@ -40,6 +40,8 @@ Read, list, info, test, and extract:
 - `.zst`
 - `.lzip`
 
+On Windows, Laplace first uses its managed archive readers. If an external archive cannot be read there and the archive is not password-protected, extraction falls back to Windows' inbox `tar.exe`/libarchive path.
+
 Unsupported formats fail with a clear error instead of silently producing partial output.
 
 ## Native LPC Format
