@@ -289,6 +289,21 @@ The project root `Setup.exe` can be refreshed from that output:
 Copy-Item .\artifacts\installer\LaplaceSetup.exe .\Setup.exe -Force
 ```
 
+## Verify Release
+
+Run the full release verification path before tagging:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1 `
+  -Configuration Release `
+  -Runtime win-x64 `
+  -Version 1.5.0 `
+  -MsixVersion 1.5.0.0 `
+  -SelfContained
+```
+
+This builds and tests the solution, builds installer and MSIX artifacts, generates `artifacts\SHA256SUMS.txt`, silently installs the generated installer, runs archive smoke tests, verifies Windows `tar.exe` fallback extraction, and checks shell integration install/uninstall.
+
 ## Build MSIX
 
 Prerequisites:

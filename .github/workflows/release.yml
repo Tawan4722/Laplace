@@ -49,40 +49,17 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "msix_version=$msixVersion" >> $env:GITHUB_OUTPUT
 
-      - name: Verify
-        shell: pwsh
-        run: .\setup.ps1
-
-      - name: Build installer
-        shell: pwsh
-        run: .\installer\build-installer.ps1 -Configuration Release -Runtime win-x64 -Version "${{ steps.version.outputs.version }}" -SelfContained
-
-      - name: Build MSIX
+      - name: Verify release package
         shell: pwsh
         run: |
-          .\installer\build-msix.ps1 `
+          .\scripts\verify-release.ps1 `
             -Configuration Release `
             -Runtime win-x64 `
-            -Version "${{ steps.version.outputs.msix_version }}" `
+            -Version "${{ steps.version.outputs.version }}" `
+            -MsixVersion "${{ steps.version.outputs.msix_version }}" `
             -PackageName Laplace.Project `
             -Publisher "CN=LaplaceProject" `
             -SelfContained
-
-      - name: Generate checksums
-        shell: pwsh
-        run: |
-          $files = @(
-            "artifacts\installer\LaplaceSetup.exe",
-            "artifacts\msix\Laplace_${{ steps.version.outputs.msix_version }}_win-x64.msix"
-          )
-
-          $lines = foreach ($file in $files) {
-            $hash = (Get-FileHash -Path $file -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $(Split-Path -Path $file -Leaf)"
-          }
-
-          $lines | Set-Content -Path "artifacts\SHA256SUMS.txt" -Encoding ASCII
-          Get-Content "artifacts\SHA256SUMS.txt"
 
       - name: Publish release assets
         shell: pwsh
