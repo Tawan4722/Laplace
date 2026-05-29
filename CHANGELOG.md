@@ -4,6 +4,11 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.6.2
+
+- Fixed release verification installer smoke tests so they restore the previous Inno installer registration after running.
+- Updated the installer to use the default per-user Laplace install directory instead of reusing a previous app directory during silent installs.
+
 ## 1.6.1
 
 - Fixed release verification shell-integration smoke tests so they restore any existing Explorer right-click registration after running.

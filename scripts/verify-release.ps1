@@ -149,6 +149,68 @@ function Get-ExistingShellIntegrationCliPath {
     return $null
 }
 
+function Get-RegistryKeySnapshot([string]$SubKey) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKey)
+    if ($null -eq $key) {
+        return $null
+    }
+
+    try {
+        $values = @()
+        foreach ($valueName in $key.GetValueNames()) {
+            $values += [pscustomobject]@{
+                Name = $valueName
+                Value = $key.GetValue($valueName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                Kind = $key.GetValueKind($valueName)
+            }
+        }
+
+        return [pscustomobject]@{
+            SubKey = $SubKey
+            Values = $values
+        }
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Remove-RegistryKeyTree([string]$SubKey) {
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($SubKey, $false)
+}
+
+function Restore-RegistryKeySnapshot([string]$SubKey, $Snapshot) {
+    Remove-RegistryKeyTree $SubKey
+    if ($null -eq $Snapshot) {
+        return
+    }
+
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($SubKey)
+    try {
+        foreach ($value in $Snapshot.Values) {
+            $key.SetValue($value.Name, $value.Value, $value.Kind)
+        }
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Restore-ShellIntegration([string]$CliPath) {
+    if ([string]::IsNullOrWhiteSpace($CliPath)) {
+        return
+    }
+
+    if (Test-Path -LiteralPath $CliPath) {
+        Invoke-NativeCommand "restore previous shell integration" {
+            & $CliPath integrate install --cli-path $CliPath
+        }
+    }
+    else {
+        Write-Warning "Previous shell integration target no longer exists and could not be restored: $CliPath"
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($MsixVersion)) {
     $MsixVersion = "$Version.0"
 }
@@ -160,6 +222,7 @@ $checksumsPath = Join-Path $repoRoot "artifacts\SHA256SUMS.txt"
 $validationRoot = Join-Path $repoRoot "artifacts\release-validation\v$Version"
 $installDir = Join-Path $validationRoot "installed"
 $smokeRoot = Join-Path $validationRoot "smoke"
+$uninstallSubKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\{F0EF4E86-D377-46E9-983A-50A83D5E6E52}_is1"
 
 Set-Location $repoRoot
 
@@ -225,116 +288,128 @@ $checksumLines | Set-Content -Path $checksumsPath -Encoding ASCII
 Get-Content -Path $checksumsPath
 
 Write-Host "==> Installing release installer for smoke tests..."
+$restoreCliPath = Get-ExistingShellIntegrationCliPath
+$restoreUninstallKey = Get-RegistryKeySnapshot $uninstallSubKey
+if (-not [string]::IsNullOrWhiteSpace($restoreCliPath)) {
+    Write-Host "    Existing shell integration will be restored to: $restoreCliPath"
+}
+if ($null -ne $restoreUninstallKey) {
+    Write-Host "    Existing installer registration will be restored after smoke tests."
+}
+
 if (Test-Path -LiteralPath $validationRoot) {
     Remove-Item -LiteralPath $validationRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
 
-$installArgs = @(
-    "/VERYSILENT",
-    "/SUPPRESSMSGBOXES",
-    "/NORESTART",
-    "/NOICONS",
-    "/DIR=$installDir",
-    "/TASKS="
-)
-$process = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru -WindowStyle Hidden
-if ($process.ExitCode -ne 0) {
-    throw "Installer smoke install failed with exit code $($process.ExitCode)."
-}
-
 $laplaceExe = Join-Path $installDir "laplace.exe"
 $laplaceGuiExe = Join-Path $installDir "laplace-gui.exe"
-foreach ($required in @($laplaceExe, $laplaceGuiExe, (Join-Path $installDir "README.md"), (Join-Path $installDir "docs\LPC_FORMAT.md"))) {
-    if (-not (Test-Path -LiteralPath $required)) {
-        throw "Installed package missing required file: $required"
-    }
-}
-
-Write-Host "==> Running CLI smoke tests..."
-New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
-$sourceRoot = Join-Path $smokeRoot "source"
-New-SmokeSourceTree $sourceRoot
-
-$lpcPath = Join-Path $smokeRoot "sample.lpc"
-Invoke-Laplace $laplaceExe "estimate" @("estimate", $sourceRoot, "--mode", "auto") | Out-Null
-Invoke-Laplace $laplaceExe "compress lpc" @("compress", $sourceRoot, $lpcPath, "--mode", "balanced", "--verify") | Out-Null
-Invoke-Laplace $laplaceExe "list lpc" @("list", $lpcPath) | Out-Null
-Invoke-Laplace $laplaceExe "info lpc" @("info", $lpcPath) | Out-Null
-Invoke-Laplace $laplaceExe "test lpc" @("test", $lpcPath) | Out-Null
-$lpcOut = Join-Path $smokeRoot "out-lpc"
-Invoke-Laplace $laplaceExe "extract lpc" @("extract", $lpcPath, $lpcOut, "--overwrite") | Out-Null
-Assert-ContentMatch $sourceRoot (Join-Path $lpcOut "source")
-
-$secureLpcPath = Join-Path $smokeRoot "secure.lpc"
-Invoke-Laplace $laplaceExe "compress encrypted lpc" @("compress", $sourceRoot, $secureLpcPath, "--password", "release-smoke-secret", "--verify") | Out-Null
-Invoke-Laplace $laplaceExe "test encrypted lpc" @("test", $secureLpcPath, "--password", "release-smoke-secret") | Out-Null
-Invoke-Laplace $laplaceExe "reject wrong lpc password" @("test", $secureLpcPath, "--password", "wrong") @(2) | Out-Null
-
-$zipPath = Join-Path $smokeRoot "secure.zip"
-Invoke-Laplace $laplaceExe "compress encrypted zip" @("compress", $sourceRoot, $zipPath, "--password", "zip-smoke-secret", "--verify") | Out-Null
-Invoke-Laplace $laplaceExe "test encrypted zip" @("test", $zipPath, "--password", "zip-smoke-secret") | Out-Null
-$zipOut = Join-Path $smokeRoot "out-zip"
-Invoke-Laplace $laplaceExe "extract encrypted zip" @("extract", $zipPath, $zipOut, "--overwrite", "--password", "zip-smoke-secret") | Out-Null
-Assert-ContentMatch $sourceRoot (Join-Path $zipOut "source")
-
-Write-Host "==> Running Windows tar fallback smoke test..."
-$tarZstPath = Join-Path $smokeRoot "sample.tar.zst"
-Push-Location $smokeRoot
 try {
-    Invoke-NativeCommand "tar --zstd" {
-        & tar --zstd -cf $tarZstPath source
-    }
-}
-finally {
-    Pop-Location
-}
-$tarZstOut = Join-Path $smokeRoot "out-tar-zst"
-Invoke-Laplace $laplaceExe "extract tar.zst fallback" @("extract", $tarZstPath, $tarZstOut, "--overwrite") | Out-Null
-Assert-ContentMatch $sourceRoot (Join-Path $tarZstOut "source")
-
-if (-not $SkipShellIntegrationSmoke) {
-    Write-Host "==> Running shell integration smoke test..."
-    $restoreCliPath = Get-ExistingShellIntegrationCliPath
-    if (-not [string]::IsNullOrWhiteSpace($restoreCliPath)) {
-        Write-Host "    Existing shell integration will be restored to: $restoreCliPath"
+    $installArgs = @(
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART",
+        "/NOICONS",
+        "/DIR=$installDir",
+        "/TASKS="
+    )
+    $process = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru -WindowStyle Hidden
+    if ($process.ExitCode -ne 0) {
+        throw "Installer smoke install failed with exit code $($process.ExitCode)."
     }
 
+    foreach ($required in @($laplaceExe, $laplaceGuiExe, (Join-Path $installDir "README.md"), (Join-Path $installDir "docs\LPC_FORMAT.md"))) {
+        if (-not (Test-Path -LiteralPath $required)) {
+            throw "Installed package missing required file: $required"
+        }
+    }
+
+    Write-Host "==> Running CLI smoke tests..."
+    New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
+    $sourceRoot = Join-Path $smokeRoot "source"
+    New-SmokeSourceTree $sourceRoot
+
+    $lpcPath = Join-Path $smokeRoot "sample.lpc"
+    Invoke-Laplace $laplaceExe "estimate" @("estimate", $sourceRoot, "--mode", "auto") | Out-Null
+    Invoke-Laplace $laplaceExe "compress lpc" @("compress", $sourceRoot, $lpcPath, "--mode", "balanced", "--verify") | Out-Null
+    Invoke-Laplace $laplaceExe "list lpc" @("list", $lpcPath) | Out-Null
+    Invoke-Laplace $laplaceExe "info lpc" @("info", $lpcPath) | Out-Null
+    Invoke-Laplace $laplaceExe "test lpc" @("test", $lpcPath) | Out-Null
+    $lpcOut = Join-Path $smokeRoot "out-lpc"
+    Invoke-Laplace $laplaceExe "extract lpc" @("extract", $lpcPath, $lpcOut, "--overwrite") | Out-Null
+    Assert-ContentMatch $sourceRoot (Join-Path $lpcOut "source")
+
+    $secureLpcPath = Join-Path $smokeRoot "secure.lpc"
+    Invoke-Laplace $laplaceExe "compress encrypted lpc" @("compress", $sourceRoot, $secureLpcPath, "--password", "release-smoke-secret", "--verify") | Out-Null
+    Invoke-Laplace $laplaceExe "test encrypted lpc" @("test", $secureLpcPath, "--password", "release-smoke-secret") | Out-Null
+    Invoke-Laplace $laplaceExe "reject wrong lpc password" @("test", $secureLpcPath, "--password", "wrong") @(2) | Out-Null
+
+    $zipPath = Join-Path $smokeRoot "secure.zip"
+    Invoke-Laplace $laplaceExe "compress encrypted zip" @("compress", $sourceRoot, $zipPath, "--password", "zip-smoke-secret", "--verify") | Out-Null
+    Invoke-Laplace $laplaceExe "test encrypted zip" @("test", $zipPath, "--password", "zip-smoke-secret") | Out-Null
+    $zipOut = Join-Path $smokeRoot "out-zip"
+    Invoke-Laplace $laplaceExe "extract encrypted zip" @("extract", $zipPath, $zipOut, "--overwrite", "--password", "zip-smoke-secret") | Out-Null
+    Assert-ContentMatch $sourceRoot (Join-Path $zipOut "source")
+
+    Write-Host "==> Running Windows tar fallback smoke test..."
+    $tarZstPath = Join-Path $smokeRoot "sample.tar.zst"
+    Push-Location $smokeRoot
     try {
-        Invoke-Laplace $laplaceExe "integrate uninstall before smoke" @("integrate", "uninstall") @(0) | Out-Null
-        Invoke-Laplace $laplaceExe "integrate status clean" @("integrate", "status") | Out-Null
-        Invoke-Laplace $laplaceExe "integrate install" @("integrate", "install", "--cli-path", $laplaceExe) | Out-Null
-        $status = Invoke-Laplace $laplaceExe "integrate status installed" @("integrate", "status")
-        if (($status -join [Environment]::NewLine) -notmatch "Installed:\s+True") {
-            throw "Shell integration did not report installed after install."
+        Invoke-NativeCommand "tar --zstd" {
+            & tar --zstd -cf $tarZstPath source
         }
     }
     finally {
+        Pop-Location
+    }
+    $tarZstOut = Join-Path $smokeRoot "out-tar-zst"
+    Invoke-Laplace $laplaceExe "extract tar.zst fallback" @("extract", $tarZstPath, $tarZstOut, "--overwrite") | Out-Null
+    Assert-ContentMatch $sourceRoot (Join-Path $tarZstOut "source")
+
+    if (-not $SkipShellIntegrationSmoke) {
+        Write-Host "==> Running shell integration smoke test..."
         try {
-            Invoke-Laplace $laplaceExe "integrate uninstall after smoke" @("integrate", "uninstall") @(0) | Out-Null
+            Invoke-Laplace $laplaceExe "integrate uninstall before smoke" @("integrate", "uninstall") @(0) | Out-Null
+            Invoke-Laplace $laplaceExe "integrate status clean" @("integrate", "status") | Out-Null
+            Invoke-Laplace $laplaceExe "integrate install" @("integrate", "install", "--cli-path", $laplaceExe) | Out-Null
+            $status = Invoke-Laplace $laplaceExe "integrate status installed" @("integrate", "status")
+            if (($status -join [Environment]::NewLine) -notmatch "Installed:\s+True") {
+                throw "Shell integration did not report installed after install."
+            }
         }
-        catch {
-            Write-Warning "Could not remove temporary shell integration: $($_.Exception.Message)"
-        }
+        finally {
+            try {
+                Invoke-Laplace $laplaceExe "integrate uninstall after smoke" @("integrate", "uninstall") @(0) | Out-Null
+            }
+            catch {
+                Write-Warning "Could not remove temporary shell integration: $($_.Exception.Message)"
+            }
 
-        if (-not [string]::IsNullOrWhiteSpace($restoreCliPath)) {
-            if (Test-Path -LiteralPath $restoreCliPath) {
-                Invoke-NativeCommand "restore previous shell integration" {
-                    & $restoreCliPath integrate install --cli-path $restoreCliPath
-                }
-            }
-            else {
-                Write-Warning "Previous shell integration target no longer exists and could not be restored: $restoreCliPath"
-            }
+            Restore-ShellIntegration $restoreCliPath
+        }
+    }
+}
+finally {
+    $uninstallerPath = Join-Path $installDir "unins000.exe"
+    if (Test-Path -LiteralPath $uninstallerPath) {
+        $process = Start-Process -FilePath $uninstallerPath -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") -Wait -PassThru -WindowStyle Hidden
+        if ($process.ExitCode -ne 0) {
+            Write-Warning "Validation uninstall failed with exit code $($process.ExitCode)."
         }
     }
 
-    $finalStatus = Invoke-Laplace $laplaceExe "integrate final status" @("integrate", "status")
-    $expectedInstalled = -not [string]::IsNullOrWhiteSpace($restoreCliPath)
-    if ($expectedInstalled -and (($finalStatus -join [Environment]::NewLine) -notmatch "Installed:\s+True")) {
-        throw "Shell integration was not restored after smoke test."
+    Restore-ShellIntegration $restoreCliPath
+    Restore-RegistryKeySnapshot $uninstallSubKey $restoreUninstallKey
+}
+
+if (-not $SkipShellIntegrationSmoke) {
+    if (-not [string]::IsNullOrWhiteSpace($restoreCliPath)) {
+        $finalStatus = Invoke-Laplace $restoreCliPath "integrate final status" @("integrate", "status")
+        if (($finalStatus -join [Environment]::NewLine) -notmatch "Installed:\s+True") {
+            throw "Shell integration was not restored after smoke test."
+        }
     }
-    if (-not $expectedInstalled -and (($finalStatus -join [Environment]::NewLine) -notmatch "Installed:\s+False")) {
+    elseif ($null -ne (Get-ExistingShellIntegrationCliPath)) {
         throw "Shell integration did not report clean after smoke test."
     }
 }
