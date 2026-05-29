@@ -55,13 +55,17 @@ public sealed class ZipArchiveHandler
     {
         Directory.CreateDirectory(destinationFolder);
         using var zip = OpenZip(archivePath, options.Password);
-        var entries = zip.Cast<ZipEntry>().ToList();
-        var totalBytes = entries.Where(x => x.IsFile && x.Size > 0).Sum(x => x.Size);
+        var entries = zip.Cast<ZipEntry>()
+            .Select((entry, index) => new IndexedZipEntry(entry, index))
+            .ToList();
+        var selectedEntries = FilterSelectedEntries(entries, options.SelectedEntryIds).ToList();
+        var totalBytes = selectedEntries.Where(x => x.Entry.IsFile && x.Entry.Size > 0).Sum(x => x.Entry.Size);
         long processedBytes = 0;
 
-        foreach (var entry in entries)
+        foreach (var selectedEntry in selectedEntries)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var entry = selectedEntry.Entry;
             if (entry.IsCrypted && options.Password is null)
             {
                 throw new ArchivePasswordRequiredException(archivePath);
@@ -173,4 +177,37 @@ public sealed class ZipArchiveHandler
                ex.Message.Contains("AES", StringComparison.OrdinalIgnoreCase) ||
                ex.Message.Contains("decrypt", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static IEnumerable<IndexedZipEntry> FilterSelectedEntries(
+        IReadOnlyList<IndexedZipEntry> entries,
+        IReadOnlySet<long>? selectedEntryIds)
+    {
+        if (selectedEntryIds is null || selectedEntryIds.Count == 0)
+        {
+            return entries;
+        }
+
+        var selectedDirectoryPrefixes = entries
+            .Where(x => selectedEntryIds.Contains(x.Id) && x.Entry.IsDirectory)
+            .Select(x => NormalizeDirectoryPrefix(x.Entry.Name))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+
+        return entries.Where(x => selectedEntryIds.Contains(x.Id) ||
+                                  selectedDirectoryPrefixes.Any(prefix => IsDescendant(x.Entry.Name, prefix)));
+    }
+
+    private static string NormalizeDirectoryPrefix(string path)
+    {
+        var normalized = path.Replace('\\', '/').TrimStart('/');
+        return normalized.EndsWith("/", StringComparison.Ordinal) ? normalized : $"{normalized}/";
+    }
+
+    private static bool IsDescendant(string path, string directoryPrefix)
+    {
+        var normalized = path.Replace('\\', '/').TrimStart('/');
+        return normalized.StartsWith(directoryPrefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record IndexedZipEntry(ZipEntry Entry, long Id);
 }

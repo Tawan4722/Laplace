@@ -301,6 +301,7 @@ public sealed class MainForm : Form
                 item.SubItems.Add(entry.Method);
                 item.SubItems.Add(entry.IsEncrypted ? "Yes" : "No");
                 item.SubItems.Add(entry.Path);
+                item.Tag = entry;
                 _entriesView.Items.Add(item);
             }
         }
@@ -410,13 +411,17 @@ public sealed class MainForm : Form
         {
             Overwrite = dialog.Overwrite,
             VerifyChecksums = true,
+            SelectedEntryIds = GetSelectedEntryIds(),
             Password = dialog.Password
         };
+        var selectionText = options.SelectedEntryIds is { Count: > 0 }
+            ? $"{options.SelectedEntryIds.Count} selected item(s)"
+            : "archive";
 
         var completed = await RunOperationAsync(
-            "Extracting archive...",
+            $"Extracting {selectionText}...",
             (progress, cancellationToken) => _archives.ExtractAsync(_currentArchivePath, dialog.DestinationFolder, options, progress, cancellationToken),
-            $"Extracted to {dialog.DestinationFolder}.").ConfigureAwait(true);
+            $"Extracted {selectionText} to {dialog.DestinationFolder}.").ConfigureAwait(true);
         if (completed)
         {
             _currentPassword = dialog.Password;
@@ -568,6 +573,21 @@ public sealed class MainForm : Form
 
         _entriesView.Focus();
         _entriesView.Items[0].Selected = true;
+    }
+
+    private IReadOnlySet<long>? GetSelectedEntryIds()
+    {
+        if (_entriesView.SelectedItems.Count == 0)
+        {
+            return null;
+        }
+
+        return _entriesView.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(item => item.Tag)
+            .OfType<ArchiveEntryListing>()
+            .Select(entry => entry.Id)
+            .ToHashSet();
     }
 
     private PasswordContext? PromptForPassword(string title)

@@ -75,18 +75,23 @@ public sealed class SharpCompressArchiveHandler
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var totalBytes = List(archivePath, options.Password)
-            .Where(x => !x.IsDirectory)
-            .Sum(x => x.OriginalSize);
         long processedBytes = 0;
         Directory.CreateDirectory(destinationFolder);
 
         try
         {
             using var archive = ArchiveFactory.OpenArchive(archivePath, CreateReaderOptions(archivePath, options.Password));
-            foreach (var entry in archive.Entries)
+            var entries = archive.Entries
+                .Select((entry, index) => new IndexedArchiveEntry(entry, index, NormalizeEntryName(entry.Key, archivePath)))
+                .ToList();
+            var selectedEntries = FilterSelectedEntries(entries, options.SelectedEntryIds).ToList();
+            var totalBytes = selectedEntries
+                .Where(x => !x.Entry.IsDirectory)
+                .Sum(x => Math.Max(0, x.Entry.Size));
+            foreach (var selectedEntry in selectedEntries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var entry = selectedEntry.Entry;
                 if (!string.IsNullOrWhiteSpace(entry.LinkTarget))
                 {
                     throw new InvalidDataException($"Archive links are not extracted for safety: {entry.Key}");
@@ -97,7 +102,7 @@ public sealed class SharpCompressArchiveHandler
                     throw new ArchivePasswordRequiredException(archivePath);
                 }
 
-                var entryPath = NormalizeEntryName(entry.Key, archivePath);
+                var entryPath = selectedEntry.Path;
                 var outPath = PathSecurity.EnsureSafeExtractionPath(destinationFolder, entryPath);
                 if (entry.IsDirectory)
                 {
@@ -230,4 +235,37 @@ public sealed class SharpCompressArchiveHandler
                ex.Message.Contains("No factory", StringComparison.OrdinalIgnoreCase) ||
                ex.Message.Contains("Failed to read TAR header", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static IEnumerable<IndexedArchiveEntry> FilterSelectedEntries(
+        IReadOnlyList<IndexedArchiveEntry> entries,
+        IReadOnlySet<long>? selectedEntryIds)
+    {
+        if (selectedEntryIds is null || selectedEntryIds.Count == 0)
+        {
+            return entries;
+        }
+
+        var selectedDirectoryPrefixes = entries
+            .Where(x => selectedEntryIds.Contains(x.Id) && x.Entry.IsDirectory)
+            .Select(x => NormalizeDirectoryPrefix(x.Path))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+
+        return entries.Where(x => selectedEntryIds.Contains(x.Id) ||
+                                  selectedDirectoryPrefixes.Any(prefix => IsDescendant(x.Path, prefix)));
+    }
+
+    private static string NormalizeDirectoryPrefix(string path)
+    {
+        var normalized = path.Replace('\\', '/').TrimStart('/');
+        return normalized.EndsWith("/", StringComparison.Ordinal) ? normalized : $"{normalized}/";
+    }
+
+    private static bool IsDescendant(string path, string directoryPrefix)
+    {
+        var normalized = path.Replace('\\', '/').TrimStart('/');
+        return normalized.StartsWith(directoryPrefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record IndexedArchiveEntry(IArchiveEntry Entry, long Id, string Path);
 }

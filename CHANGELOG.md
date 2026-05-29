@@ -4,6 +4,10 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.6.0
+
+- Added selected-entry extraction for the desktop UI and archive extraction services, covering native LPC, ZIP, and managed external archive paths such as `.7z`.
+
 ## 1.5.0
 
 - Fixed Windows native extraction fallback for external archives that SharpCompress opens but later fails to enumerate, including larger `.tar.zst` archives.

@@ -356,6 +356,95 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public async Task Lpc_SelectedDirectoryExtraction_ExtractsDescendantsOnly()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        var selectedDir = Path.Combine(sourceDir, "selected");
+        var skippedDir = Path.Combine(sourceDir, "skipped");
+        Directory.CreateDirectory(selectedDir);
+        Directory.CreateDirectory(skippedDir);
+        await File.WriteAllTextAsync(Path.Combine(selectedDir, "keep.txt"), "keep this file");
+        await File.WriteAllTextAsync(Path.Combine(skippedDir, "skip.txt"), "skip this file");
+        var archivePath = Path.Combine(root, "payload.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Balanced,
+            VerifyAfterCompression = false
+        });
+        var selectedEntry = service.List(archivePath).Single(x => x.IsDirectory && x.Path == "payload/selected");
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            SelectedEntryIds = new HashSet<long> { selectedEntry.Id }
+        });
+
+        Assert.True(File.Exists(Path.Combine(extractPath, "payload", "selected", "keep.txt")));
+        Assert.False(File.Exists(Path.Combine(extractPath, "payload", "skipped", "skip.txt")));
+    }
+
+    [Fact]
+    public async Task Zip_SelectedFileExtraction_ExtractsOnlyChosenFile()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        Directory.CreateDirectory(sourceDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "alpha.txt"), "alpha");
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "beta.txt"), "beta");
+        var archivePath = Path.Combine(root, "payload.zip");
+        var extractPath = Path.Combine(root, "out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            VerifyAfterCompression = false
+        });
+        var selectedEntry = service.List(archivePath).Single(x => x.Path.EndsWith("alpha.txt", StringComparison.OrdinalIgnoreCase));
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            SelectedEntryIds = new HashSet<long> { selectedEntry.Id }
+        });
+
+        Assert.True(File.Exists(Path.Combine(extractPath, "payload", "alpha.txt")));
+        Assert.False(File.Exists(Path.Combine(extractPath, "payload", "beta.txt")));
+    }
+
+    [Fact]
+    public async Task SevenZip_SelectedFileExtraction_ExtractsOnlyChosenFile()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        Directory.CreateDirectory(sourceDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "alpha.txt"), string.Join(Environment.NewLine, Enumerable.Repeat("alpha", 200)));
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "beta.txt"), string.Join(Environment.NewLine, Enumerable.Repeat("beta", 200)));
+        var archivePath = Path.Combine(root, "payload.7z");
+        var extractPath = Path.Combine(root, "out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Maximum,
+            VerifyAfterCompression = false
+        });
+        var selectedEntry = service.List(archivePath).Single(x => x.Path.EndsWith("alpha.txt", StringComparison.OrdinalIgnoreCase));
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            SelectedEntryIds = new HashSet<long> { selectedEntry.Id }
+        });
+
+        Assert.True(File.Exists(Path.Combine(extractPath, "payload", "alpha.txt")));
+        Assert.False(File.Exists(Path.Combine(extractPath, "payload", "beta.txt")));
+    }
+
+    [Fact]
     public void DetectReadKind_UsesSevenZipAndRarMagicBeforeExtension()
     {
         var root = CreateTempFolder();
