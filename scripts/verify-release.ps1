@@ -88,6 +88,67 @@ function New-SmokeSourceTree([string]$SourceRoot) {
     [IO.File]::WriteAllBytes((Join-Path $SourceRoot "nested\bytes.bin"), ([byte[]](0..255)))
 }
 
+function Get-RegistryDefaultValue([string]$SubKey) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($SubKey)
+    if ($null -eq $key) {
+        return $null
+    }
+
+    try {
+        $value = $key.GetValue("")
+        if ($null -eq $value) {
+            return $null
+        }
+
+        return $value.ToString()
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Get-ExecutablePathFromCommand([string]$Command) {
+    if ([string]::IsNullOrWhiteSpace($Command)) {
+        return $null
+    }
+
+    if ($Command -match '^\s*"([^"]+)"') {
+        return $matches[1]
+    }
+
+    return ($Command -split '\s+', 2)[0]
+}
+
+function Get-ExistingShellIntegrationCliPath {
+    $commandSubKeys = @(
+        "Software\Classes\Laplace.Archive\shell\laplace\shell\extract_here\command",
+        "Software\Classes\Laplace.Archive\shell\laplace\shell\test_archive\command",
+        "Software\Classes\Laplace.Archive\shell\laplace\shell\open\command"
+    )
+
+    foreach ($subKey in $commandSubKeys) {
+        $command = Get-RegistryDefaultValue $subKey
+        $exePath = Get-ExecutablePathFromCommand $command
+        if ([string]::IsNullOrWhiteSpace($exePath)) {
+            continue
+        }
+
+        if ([string]::Equals((Split-Path -Leaf $exePath), "laplace.exe", [StringComparison]::OrdinalIgnoreCase) -and
+            (Test-Path -LiteralPath $exePath)) {
+            return $exePath
+        }
+
+        if ([string]::Equals((Split-Path -Leaf $exePath), "laplace-gui.exe", [StringComparison]::OrdinalIgnoreCase)) {
+            $siblingCli = Join-Path (Split-Path -Parent $exePath) "laplace.exe"
+            if (Test-Path -LiteralPath $siblingCli) {
+                return $siblingCli
+            }
+        }
+    }
+
+    return $null
+}
+
 if ([string]::IsNullOrWhiteSpace($MsixVersion)) {
     $MsixVersion = "$Version.0"
 }
@@ -234,17 +295,47 @@ Assert-ContentMatch $sourceRoot (Join-Path $tarZstOut "source")
 
 if (-not $SkipShellIntegrationSmoke) {
     Write-Host "==> Running shell integration smoke test..."
-    Invoke-Laplace $laplaceExe "integrate uninstall before smoke" @("integrate", "uninstall") @(0) | Out-Null
-    Invoke-Laplace $laplaceExe "integrate status clean" @("integrate", "status") | Out-Null
-    Invoke-Laplace $laplaceExe "integrate install" @("integrate", "install", "--cli-path", $laplaceExe) | Out-Null
-    $status = Invoke-Laplace $laplaceExe "integrate status installed" @("integrate", "status")
-    if (($status -join [Environment]::NewLine) -notmatch "Installed:\s+True") {
-        throw "Shell integration did not report installed after install."
+    $restoreCliPath = Get-ExistingShellIntegrationCliPath
+    if (-not [string]::IsNullOrWhiteSpace($restoreCliPath)) {
+        Write-Host "    Existing shell integration will be restored to: $restoreCliPath"
     }
-    Invoke-Laplace $laplaceExe "integrate uninstall" @("integrate", "uninstall") | Out-Null
-    $finalStatus = Invoke-Laplace $laplaceExe "integrate status clean after uninstall" @("integrate", "status")
-    if (($finalStatus -join [Environment]::NewLine) -notmatch "Installed:\s+False") {
-        throw "Shell integration did not report clean after uninstall."
+
+    try {
+        Invoke-Laplace $laplaceExe "integrate uninstall before smoke" @("integrate", "uninstall") @(0) | Out-Null
+        Invoke-Laplace $laplaceExe "integrate status clean" @("integrate", "status") | Out-Null
+        Invoke-Laplace $laplaceExe "integrate install" @("integrate", "install", "--cli-path", $laplaceExe) | Out-Null
+        $status = Invoke-Laplace $laplaceExe "integrate status installed" @("integrate", "status")
+        if (($status -join [Environment]::NewLine) -notmatch "Installed:\s+True") {
+            throw "Shell integration did not report installed after install."
+        }
+    }
+    finally {
+        try {
+            Invoke-Laplace $laplaceExe "integrate uninstall after smoke" @("integrate", "uninstall") @(0) | Out-Null
+        }
+        catch {
+            Write-Warning "Could not remove temporary shell integration: $($_.Exception.Message)"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($restoreCliPath)) {
+            if (Test-Path -LiteralPath $restoreCliPath) {
+                Invoke-NativeCommand "restore previous shell integration" {
+                    & $restoreCliPath integrate install --cli-path $restoreCliPath
+                }
+            }
+            else {
+                Write-Warning "Previous shell integration target no longer exists and could not be restored: $restoreCliPath"
+            }
+        }
+    }
+
+    $finalStatus = Invoke-Laplace $laplaceExe "integrate final status" @("integrate", "status")
+    $expectedInstalled = -not [string]::IsNullOrWhiteSpace($restoreCliPath)
+    if ($expectedInstalled -and (($finalStatus -join [Environment]::NewLine) -notmatch "Installed:\s+True")) {
+        throw "Shell integration was not restored after smoke test."
+    }
+    if (-not $expectedInstalled -and (($finalStatus -join [Environment]::NewLine) -notmatch "Installed:\s+False")) {
+        throw "Shell integration did not report clean after smoke test."
     }
 }
 

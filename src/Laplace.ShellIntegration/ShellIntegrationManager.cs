@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace Laplace.ShellIntegration;
@@ -63,6 +64,7 @@ public sealed class ShellIntegrationManager
         RegisterCreateMenu(classes, @"*\shell\laplace", quotedCli, quotedGui, "%1", BuildNonArchiveFileFilter());
         RegisterCreateMenu(classes, @"Directory\shell\laplace", quotedCli, quotedGui, "%1");
         RegisterCreateMenu(classes, @"Directory\Background\shell\laplace", quotedCli, quotedGui, "%V");
+        NotifyShellAssociationsChanged();
     }
 
     public void Uninstall()
@@ -90,6 +92,7 @@ public sealed class ShellIntegrationManager
         SafeDeleteTree(classes, @"Directory\shell\laplace");
         SafeDeleteTree(classes, @"Directory\Background\shell\laplace");
         RemoveLegacyFlatVerbs(classes);
+        NotifyShellAssociationsChanged();
     }
 
     public ShellIntegrationStatus GetStatus()
@@ -211,6 +214,21 @@ public sealed class ShellIntegrationManager
         var directory = Path.GetDirectoryName(cliPath) ?? string.Empty;
         return Path.Combine(directory, "laplace-gui.exe");
     }
+
+    private static void NotifyShellAssociationsChanged()
+    {
+        try
+        {
+            SHChangeNotify(0x08000000, 0x0000, IntPtr.Zero, IntPtr.Zero);
+        }
+        catch
+        {
+            // Explorer will eventually refresh associations even if notification fails.
+        }
+    }
+
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 }
 
 public sealed class ShellIntegrationStatus

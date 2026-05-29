@@ -302,7 +302,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1 `
   -SelfContained
 ```
 
-This builds and tests the solution, builds installer and MSIX artifacts, generates `artifacts\SHA256SUMS.txt`, silently installs the generated installer, runs archive smoke tests, verifies Windows `tar.exe` fallback extraction, and checks shell integration install/uninstall.
+This builds and tests the solution, builds installer and MSIX artifacts, generates `artifacts\SHA256SUMS.txt`, silently installs the generated installer, runs archive smoke tests, verifies Windows `tar.exe` fallback extraction, and checks shell integration install/uninstall while restoring any existing local shell integration afterward.
 
 ## Build MSIX
 
