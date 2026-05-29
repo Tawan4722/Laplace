@@ -57,6 +57,13 @@ function Ensure-Dir([string]$path) {
     }
 }
 
+function Invoke-NativeCommand([string]$Label, [scriptblock]$Command) {
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code $LASTEXITCODE."
+    }
+}
+
 function Write-PlaceholderPng([string]$path) {
     # 1x1 transparent PNG
     $base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9r7VQAAAAASUVORK5CYII="
@@ -118,21 +125,25 @@ Write-Host "==> Publishing Laplace CLI and desktop UI for MSIX staging..."
 if (Test-Path $publishDir) { Remove-Item -LiteralPath $publishDir -Recurse -Force }
 $selfContainedValue = if ($SelfContained) { "true" } else { "false" }
 
-& $dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
-    -c $Configuration `
-    -r $Runtime `
-    --self-contained $selfContainedValue `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -o $publishDir
+Invoke-NativeCommand "dotnet publish Laplace.Cli" {
+    & $dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained $selfContainedValue `
+        -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -o $publishDir
+}
 
-& $dotnet publish (Join-Path $repoRoot "src\Laplace.Desktop\Laplace.Desktop.csproj") `
-    -c $Configuration `
-    -r $Runtime `
-    --self-contained $selfContainedValue `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -o $publishDir
+Invoke-NativeCommand "dotnet publish Laplace.Desktop" {
+    & $dotnet publish (Join-Path $repoRoot "src\Laplace.Desktop\Laplace.Desktop.csproj") `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained $selfContainedValue `
+        -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -o $publishDir
+}
 
 Write-Host "==> Preparing MSIX staging directory..."
 if (Test-Path $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force }
@@ -161,10 +172,14 @@ Ensure-CodeSigningCert -certPublisher $Publisher -targetPfx $PfxPath -password $
 if (Test-Path $packagePath) { Remove-Item -LiteralPath $packagePath -Force }
 
 Write-Host "==> Packing MSIX..."
-& $makeAppx pack /d $stageDir /p $packagePath /o | Out-Host
+Invoke-NativeCommand "makeappx pack" {
+    & $makeAppx pack /d $stageDir /p $packagePath /o | Out-Host
+}
 
 Write-Host "==> Signing MSIX..."
-& $signTool sign /fd SHA256 /f $PfxPath /p $PfxPassword $packagePath | Out-Host
+Invoke-NativeCommand "signtool sign" {
+    & $signTool sign /fd SHA256 /f $PfxPath /p $PfxPassword $packagePath | Out-Host
+}
 
 Write-Host "==> MSIX build completed."
 Write-Host "Package: $packagePath"

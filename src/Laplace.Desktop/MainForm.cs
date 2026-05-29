@@ -15,6 +15,7 @@ public sealed class MainForm : Form
     private readonly ToolStripStatusLabel _statusLabel = new();
     private readonly ToolStripStatusLabel _summaryLabel = new();
     private readonly ToolStripProgressBar _progressBar = new();
+    private readonly ToolStripButton _cancelOperationButton = new();
     private readonly ToolStripButton _extractButton = new();
     private readonly ToolStripButton _testButton = new();
     private readonly ToolStripButton _infoButton = new();
@@ -22,6 +23,7 @@ public sealed class MainForm : Form
     private string? _currentArchivePath;
     private PasswordContext? _currentPassword;
     private ArchiveSummary? _currentSummary;
+    private CancellationTokenSource? _operationCancellation;
 
     public MainForm(string[] args)
     {
@@ -176,7 +178,11 @@ public sealed class MainForm : Form
         _progressBar.Width = 180;
         _progressBar.Minimum = 0;
         _progressBar.Maximum = 100;
-        status.Items.AddRange([_statusLabel, _summaryLabel, _progressBar]);
+        _cancelOperationButton.Text = "Cancel";
+        _cancelOperationButton.Enabled = false;
+        _cancelOperationButton.Visible = false;
+        _cancelOperationButton.Click += (_, _) => CancelCurrentOperation();
+        status.Items.AddRange([_statusLabel, _summaryLabel, _progressBar, _cancelOperationButton]);
         return status;
     }
 
@@ -313,12 +319,12 @@ public sealed class MainForm : Form
         }
 
         var options = dialog.CreateOptions;
-        await RunOperationAsync(
+        var completed = await RunOperationAsync(
             "Creating archive...",
-            progress => _archives.CompressAsync(dialog.InputPaths, dialog.OutputPath, options, progress),
+            (progress, cancellationToken) => _archives.CompressAsync(dialog.InputPaths, dialog.OutputPath, options, progress, cancellationToken),
             $"Created {Path.GetFileName(dialog.OutputPath)}.").ConfigureAwait(true);
 
-        if (File.Exists(dialog.OutputPath))
+        if (completed && File.Exists(dialog.OutputPath))
         {
             await LoadArchiveAsync(dialog.OutputPath, options.Password).ConfigureAwait(true);
         }
@@ -351,7 +357,9 @@ public sealed class MainForm : Form
 
         try
         {
-            SetBusy(true);
+            using var cancellation = new CancellationTokenSource();
+            _operationCancellation = cancellation;
+            SetBusy(true, canCancel: true);
             SetStatus("Estimating compression...", 0);
             var progress = new Progress<ArchiveOperationProgress>(p =>
             {
@@ -364,10 +372,14 @@ public sealed class MainForm : Form
                 Mode = CompressionMode.Auto,
                 BlockSizeBytes = 8 * 1024 * 1024,
                 VerifyAfterCompression = false
-            }, progress).ConfigureAwait(true);
+            }, progress, cancellation.Token).ConfigureAwait(true);
 
             SetStatus("Compression estimate ready.", 100);
             MessageBox.Show(this, FormatEstimate(estimate), "Compression estimate", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus("Operation cancelled.", 0);
         }
         catch (Exception ex)
         {
@@ -375,6 +387,7 @@ public sealed class MainForm : Form
         }
         finally
         {
+            _operationCancellation = null;
             SetBusy(false);
         }
     }
@@ -400,11 +413,14 @@ public sealed class MainForm : Form
             Password = dialog.Password
         };
 
-        await RunOperationAsync(
+        var completed = await RunOperationAsync(
             "Extracting archive...",
-            progress => _archives.ExtractAsync(_currentArchivePath, dialog.DestinationFolder, options, progress),
+            (progress, cancellationToken) => _archives.ExtractAsync(_currentArchivePath, dialog.DestinationFolder, options, progress, cancellationToken),
             $"Extracted to {dialog.DestinationFolder}.").ConfigureAwait(true);
-        _currentPassword = dialog.Password;
+        if (completed)
+        {
+            _currentPassword = dialog.Password;
+        }
     }
 
     private async Task TestCurrentArchiveAsync()
@@ -417,9 +433,9 @@ public sealed class MainForm : Form
 
         await RunOperationAsync(
             "Testing archive...",
-            async _ =>
+            async (_, cancellationToken) =>
             {
-                var result = await _archives.TestAsync(_currentArchivePath, _currentPassword).ConfigureAwait(false);
+                var result = await _archives.TestAsync(_currentArchivePath, _currentPassword, cancellationToken).ConfigureAwait(false);
                 if (!result.Success)
                 {
                     throw new InvalidOperationException(result.Message);
@@ -439,14 +455,16 @@ public sealed class MainForm : Form
         MessageBox.Show(this, FormatSummary(_currentArchivePath, _currentSummary), "Archive information", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
-    private async Task RunOperationAsync(
+    private async Task<bool> RunOperationAsync(
         string startedMessage,
-        Func<IProgress<ArchiveOperationProgress>, Task> operation,
+        Func<IProgress<ArchiveOperationProgress>, CancellationToken, Task> operation,
         string completedMessage)
     {
         try
         {
-            SetBusy(true);
+            using var cancellation = new CancellationTokenSource();
+            _operationCancellation = cancellation;
+            SetBusy(true, canCancel: true);
             SetStatus(startedMessage, 0);
             var progress = new Progress<ArchiveOperationProgress>(p =>
             {
@@ -454,19 +472,28 @@ public sealed class MainForm : Form
                 SetStatus(string.IsNullOrWhiteSpace(p.CurrentItem) ? startedMessage : p.CurrentItem, percent);
             });
 
-            await operation(progress).ConfigureAwait(true);
+            await operation(progress, cancellation.Token).ConfigureAwait(true);
             SetStatus(completedMessage, 100);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus("Operation cancelled.", 0);
+            return false;
         }
         catch (ArchivePasswordRequiredException)
         {
             ShowValidation("This archive requires a password.");
+            return false;
         }
         catch (Exception ex)
         {
             ShowError(ex);
+            return false;
         }
         finally
         {
+            _operationCancellation = null;
             SetBusy(false);
         }
     }
@@ -483,11 +510,16 @@ public sealed class MainForm : Form
             : $"{summary.FileCount} files, {summary.FolderCount} folders, {FormatBytes(summary.CompressedSize)} packed";
     }
 
-    private void SetBusy(bool busy)
+    private void SetBusy(bool busy, bool canCancel = false)
     {
         UseWaitCursor = busy;
         foreach (Control control in Controls)
         {
+            if (control is StatusStrip)
+            {
+                continue;
+            }
+
             control.Enabled = !busy;
         }
 
@@ -505,12 +537,26 @@ public sealed class MainForm : Form
         }
 
         _progressBar.Visible = true;
+        _cancelOperationButton.Visible = busy && canCancel;
+        _cancelOperationButton.Enabled = busy && canCancel;
     }
 
     private void SetStatus(string message, int percent)
     {
         _statusLabel.Text = message;
         _progressBar.Value = Math.Clamp(percent, 0, 100);
+    }
+
+    private void CancelCurrentOperation()
+    {
+        if (_operationCancellation is null || _operationCancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _cancelOperationButton.Enabled = false;
+        SetStatus("Cancelling...", _progressBar.Value);
+        _operationCancellation.Cancel();
     }
 
     private void FocusSearch()

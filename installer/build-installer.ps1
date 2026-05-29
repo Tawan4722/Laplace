@@ -26,6 +26,13 @@ function Resolve-Dotnet() {
     return $dotnetCandidates[0]
 }
 
+function Invoke-NativeCommand([string]$Label, [scriptblock]$Command) {
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Label failed with exit code $LASTEXITCODE."
+    }
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $publishDir = Join-Path $repoRoot "artifacts\publish\$Runtime"
 $installerOutDir = Join-Path $repoRoot "artifacts\installer"
@@ -39,21 +46,25 @@ if (Test-Path $publishDir) {
 
 $selfContainedValue = if ($SelfContained) { "true" } else { "false" }
 
-& $dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
-    -c $Configuration `
-    -r $Runtime `
-    --self-contained $selfContainedValue `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -o $publishDir
+Invoke-NativeCommand "dotnet publish Laplace.Cli" {
+    & $dotnet publish (Join-Path $repoRoot "src\Laplace.Cli\Laplace.Cli.csproj") `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained $selfContainedValue `
+        -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -o $publishDir
+}
 
-& $dotnet publish (Join-Path $repoRoot "src\Laplace.Desktop\Laplace.Desktop.csproj") `
-    -c $Configuration `
-    -r $Runtime `
-    --self-contained $selfContainedValue `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -o $publishDir
+Invoke-NativeCommand "dotnet publish Laplace.Desktop" {
+    & $dotnet publish (Join-Path $repoRoot "src\Laplace.Desktop\Laplace.Desktop.csproj") `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained $selfContainedValue `
+        -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -o $publishDir
+}
 
 Write-Host "==> Compiling installer with Inno Setup..."
 $isccCandidates = @()
@@ -76,10 +87,12 @@ if (-not (Test-Path $installerOutDir)) {
     New-Item -ItemType Directory -Path $installerOutDir | Out-Null
 }
 
-& $iscc `
-    "/DAppVersion=$Version" `
-    "/DPublishDir=$publishDir" `
-    $issPath
+Invoke-NativeCommand "Inno Setup compiler" {
+    & $iscc `
+        "/DAppVersion=$Version" `
+        "/DPublishDir=$publishDir" `
+        $issPath
+}
 
 Write-Host "==> Installer built successfully."
 Write-Host "Output directory: $installerOutDir"

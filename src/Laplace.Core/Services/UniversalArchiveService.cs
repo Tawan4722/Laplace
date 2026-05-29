@@ -156,7 +156,9 @@ public sealed class UniversalArchiveService
         {
             await _externalHandler.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
         }
-        catch (NotSupportedException) when (_windowsNativeHandler.IsAvailable && options.Password is null)
+        catch (Exception ex) when (_windowsNativeHandler.IsAvailable &&
+                                   options.Password is null &&
+                                   SharpCompressArchiveHandler.IsUnsupportedArchiveFailure(ex))
         {
             await _windowsNativeHandler.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
         }

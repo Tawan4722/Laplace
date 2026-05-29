@@ -223,10 +223,11 @@ public sealed class SharpCompressArchiveHandler
                ex.Message.Contains("decrypt", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsUnsupportedArchiveFailure(Exception ex)
+    internal static bool IsUnsupportedArchiveFailure(Exception ex)
     {
-        return ex is InvalidFormatException or InvalidOperationException or InvalidDataException or NotSupportedException ||
+        return ex is InvalidFormatException or IncompleteArchiveException or InvalidOperationException or InvalidDataException or NotSupportedException ||
                ex.Message.Contains("Cannot determine", StringComparison.OrdinalIgnoreCase) ||
-               ex.Message.Contains("No factory", StringComparison.OrdinalIgnoreCase);
+               ex.Message.Contains("No factory", StringComparison.OrdinalIgnoreCase) ||
+               ex.Message.Contains("Failed to read TAR header", StringComparison.OrdinalIgnoreCase);
     }
 }

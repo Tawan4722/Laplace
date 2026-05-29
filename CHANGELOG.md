@@ -4,6 +4,11 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.5.0
+
+- Fixed Windows native extraction fallback for external archives that SharpCompress opens but later fails to enumerate, including larger `.tar.zst` archives.
+- Added a desktop status-bar Cancel action for long-running create, extract, test, and estimate operations.
+
 ## 1.4.1
 
 - Added Windows native archive extraction fallback through the inbox `tar.exe`/libarchive path when managed external extraction cannot read an archive.

@@ -402,6 +402,37 @@ public sealed class ArchiveRoundTripTests
             await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "native.txt")));
     }
 
+    [WindowsOnlyFact]
+    public async Task UniversalArchiveService_FallsBackToWindowsNativeExtraction_WhenSharpCompressCannotReadArchive()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        var nestedDir = Path.Combine(sourceDir, "nested");
+        Directory.CreateDirectory(nestedDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(sourceDir, "native.txt"),
+            "windows native fallback extraction" + Environment.NewLine + string.Concat(Enumerable.Repeat("abc123 ", 2000)));
+        await File.WriteAllTextAsync(Path.Combine(nestedDir, "data.csv"), string.Join(Environment.NewLine, ["id,value", "1,alpha", "2,beta", "3,gamma"]));
+        await File.WriteAllBytesAsync(Path.Combine(nestedDir, "bytes.bin"), Enumerable.Range(0, 256).Select(x => (byte)x).ToArray());
+        var archivePath = Path.Combine(root, "payload.tar.zst");
+        var extractPath = Path.Combine(root, "native-fallback-out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+
+        await CreateTarZstdArchiveAsync(root, archivePath, "payload");
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(sourceDir, "native.txt")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "native.txt")));
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(nestedDir, "data.csv")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "nested", "data.csv")));
+        Assert.Equal(
+            await File.ReadAllBytesAsync(Path.Combine(nestedDir, "bytes.bin")),
+            await File.ReadAllBytesAsync(Path.Combine(extractPath, "payload", "nested", "bytes.bin")));
+    }
+
     [Fact]
     public async Task ZipExtraction_BlocksTraversalEntry()
     {
@@ -428,6 +459,32 @@ public sealed class ArchiveRoundTripTests
         var folder = Path.Combine(Path.GetTempPath(), $"laplace-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         return folder;
+    }
+
+    private static async Task CreateTarZstdArchiveAsync(string workingDirectory, string archivePath, string inputPath)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "tar.exe",
+            WorkingDirectory = workingDirectory,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("--zstd");
+        startInfo.ArgumentList.Add("-cf");
+        startInfo.ArgumentList.Add(archivePath);
+        startInfo.ArgumentList.Add(inputPath);
+
+        using var process = System.Diagnostics.Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start tar.exe.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"tar.exe failed with exit code {process.ExitCode}: {await stdout} {await stderr}");
+        }
     }
 
     private sealed class WindowsOnlyFactAttribute : FactAttribute
