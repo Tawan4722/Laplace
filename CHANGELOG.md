@@ -4,6 +4,13 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.6.3
+
+- Hardened archive extraction path validation against absolute paths, traversal variants, Windows reserved names, alternate data streams, and unsafe path segments.
+- Blocked extraction through existing destination reparse points such as symlinks and junctions.
+- Strengthened new encrypted LPC archives with 600,000 PBKDF2 iterations, 32-byte salts, and bounded KDF metadata validation.
+- Added regression coverage for extraction path safety and LPC encryption metadata.
+
 ## 1.6.2
 
 - Fixed release verification installer smoke tests so they restore the previous Inno installer registration after running.
