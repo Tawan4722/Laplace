@@ -213,6 +213,31 @@ public sealed class ArchiveRoundTripTests
         Assert.Throws<InvalidDataException>(() => PathSecurity.EnsureSafeExtractionPath(destination, @"C:\Windows\evil.exe"));
     }
 
+    [Theory]
+    [InlineData("/tmp/evil.txt")]
+    [InlineData(@"\Windows\evil.txt")]
+    [InlineData(@"\\server\share\evil.txt")]
+    [InlineData("C:evil.txt")]
+    [InlineData("folder/file.txt:Zone.Identifier")]
+    [InlineData("folder/CON.txt")]
+    [InlineData("folder/name./file.txt")]
+    [InlineData("folder/name /file.txt")]
+    [InlineData("folder//file.txt")]
+    [InlineData("folder/./file.txt")]
+    public void PathSecurity_BlocksUnsafeWindowsExtractionNames(string unsafePath)
+    {
+        var destination = Path.Combine(Path.GetTempPath(), "laplace-security-test");
+        Assert.Throws<InvalidDataException>(() => PathSecurity.EnsureSafeExtractionPath(destination, unsafePath));
+    }
+
+    [Fact]
+    public void PathSecurity_AllowsNormalRelativePath()
+    {
+        var destination = Path.Combine(Path.GetTempPath(), "laplace-security-test");
+        var path = PathSecurity.EnsureSafeExtractionPath(destination, "folder/subfolder/file.txt");
+        Assert.EndsWith(Path.Combine("folder", "subfolder", "file.txt"), path);
+    }
+
     [Fact]
     public async Task Corruption_IsDetectedByTestCommandLogic()
     {
@@ -268,6 +293,8 @@ public sealed class ArchiveRoundTripTests
         var archive = new ArchiveReader().Read(archivePath);
         Assert.True(archive.Header.IsEncrypted);
         Assert.Equal(2, archive.Header.FormatVersion);
+        Assert.Equal(CreateArchiveOptions.DefaultKeyDerivationIterations, archive.Header.KeyDerivationIterations);
+        Assert.Equal(ArchiveEncryption.GeneratedSaltSizeBytes, archive.Header.EncryptionSalt.Length);
 
         var tester = new ArchiveTester(registry);
         Assert.True((await tester.TestAsync(archivePath, password)).Success);
@@ -284,6 +311,26 @@ public sealed class ArchiveRoundTripTests
         });
 
         Assert.Equal(await File.ReadAllTextAsync(sourceFile), await File.ReadAllTextAsync(Path.Combine(extractPath, "secret.txt")));
+    }
+
+    [Theory]
+    [InlineData(CreateArchiveOptions.MinimumKeyDerivationIterations - 1)]
+    [InlineData(CreateArchiveOptions.MaximumKeyDerivationIterations + 1)]
+    public async Task EncryptedLpc_RejectsUnsafeKeyDerivationIterations(int iterations)
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "secret.txt");
+        await File.WriteAllTextAsync(sourceFile, "secret");
+        var archivePath = Path.Combine(root, "secret.lpc");
+
+        var writer = new ArchiveWriter(new CompressorRegistry());
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+            {
+                Password = new PasswordContext("correct horse battery staple"),
+                KeyDerivationIterations = iterations,
+                VerifyAfterCompression = false
+            }));
     }
 
     [Fact]
@@ -541,6 +588,28 @@ public sealed class ArchiveRoundTripTests
         await Assert.ThrowsAsync<InvalidDataException>(() =>
             service.ExtractAsync(archivePath, Path.Combine(root, "out"), new ExtractArchiveOptions { Overwrite = true }));
         Assert.False(File.Exists(Path.Combine(root, "evil.txt")));
+    }
+
+    [Theory]
+    [InlineData("payload/file.txt:Zone.Identifier")]
+    [InlineData("payload/CON.txt")]
+    public async Task ZipExtraction_BlocksUnsafeWindowsEntryNames(string entryName)
+    {
+        var root = CreateTempFolder();
+        var archivePath = Path.Combine(root, "evil-name.zip");
+        await using (var file = File.Create(archivePath))
+        using (var zip = new ZipOutputStream(file))
+        {
+            await zip.PutNextEntryAsync(new ZipEntry(entryName), CancellationToken.None);
+            var bytes = "evil"u8.ToArray();
+            await zip.WriteAsync(bytes);
+            await zip.CloseEntryAsync(CancellationToken.None);
+            await zip.FinishAsync(CancellationToken.None);
+        }
+
+        var service = new UniversalArchiveService(new CompressorRegistry());
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            service.ExtractAsync(archivePath, Path.Combine(root, "out"), new ExtractArchiveOptions { Overwrite = true }));
     }
 
     private static string CreateTempFolder()

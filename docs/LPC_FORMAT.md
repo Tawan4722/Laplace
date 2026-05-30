@@ -28,8 +28,8 @@ All offsets and sizes use 64-bit fields where relevant.
 | DataSectionOffset | `Int64` | absolute stream offset |
 | Comment | UTF-8 string | length-prefixed `Int32` + bytes |
 | EncryptionAlgorithmId | `Byte` | LPCv2 only; `1` = AES-256-GCM |
-| KeyDerivationIterations | `Int32` | LPCv2 only; PBKDF2-HMAC-SHA256 iterations |
-| EncryptionSalt | bytes | LPCv2 only; length-prefixed `Int32` + bytes |
+| KeyDerivationIterations | `Int32` | LPCv2 only; PBKDF2-HMAC-SHA256 iterations. Current writers default to 600,000 and readers accept 210,000 through 5,000,000. |
+| EncryptionSalt | bytes | LPCv2 only; length-prefixed `Int32` + bytes. Current writers generate 32-byte salts; readers require at least 16 bytes. |
 | HeaderChecksumCrc32C | `UInt32` | CRC32C over header bytes excluding this field |
 
 LPCv2 encryption protects block payload bytes only. File names, sizes, timestamps, and table metadata remain readable so `list` and `info` can work without decrypting file contents.

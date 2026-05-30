@@ -47,6 +47,13 @@ public sealed class ArchiveWriter
         var encryptionKey = Array.Empty<byte>();
         if (options.Password is not null)
         {
+            if (options.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
+                options.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
+            {
+                throw new InvalidOperationException(
+                    $"Key derivation iterations must be between {CreateArchiveOptions.MinimumKeyDerivationIterations:N0} and {CreateArchiveOptions.MaximumKeyDerivationIterations:N0}.");
+            }
+
             header.FormatVersion = 2;
             header.ArchiveFlags |= ArchiveHeader.EncryptionFlag;
             header.EncryptionAlgorithmId = ArchiveHeader.EncryptionAlgorithmAes256Gcm;

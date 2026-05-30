@@ -99,8 +99,8 @@ LPC encryption:
 
 - LPCv2 payload-only encryption
 - AES-256-GCM per block
-- PBKDF2-HMAC-SHA256 key derivation
-- Per-archive random salt
+- PBKDF2-HMAC-SHA256 key derivation with 600,000 default iterations for new archives
+- Per-archive 256-bit random salt
 - Per-block random nonce and authentication tag
 
 ZIP encryption:
@@ -239,6 +239,7 @@ Laplace extraction defends against common archive risks:
 - Validates decompressed block sizes
 - Validates SHA-256 for extracted LPC files
 - Authenticates encrypted LPC blocks with AES-GCM
+- Uses bounded PBKDF2 settings for encrypted LPC archives to avoid weak new archives and maliciously expensive KDF metadata
 
 Password values are not printed in command output.
 

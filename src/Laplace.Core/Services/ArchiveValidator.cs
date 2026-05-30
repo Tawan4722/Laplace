@@ -55,7 +55,9 @@ public static class ArchiveValidator
                 throw new LaplaceArchiveException($"Unsupported LPC encryption algorithm: {header.EncryptionAlgorithmId}");
             }
 
-            if (header.EncryptionSalt.Length < ArchiveEncryption.SaltSizeBytes || header.KeyDerivationIterations <= 0)
+            if (header.EncryptionSalt.Length < ArchiveEncryption.MinimumSaltSizeBytes ||
+                header.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
+                header.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
             {
                 throw new LaplaceArchiveException("Invalid LPC encryption metadata.");
             }

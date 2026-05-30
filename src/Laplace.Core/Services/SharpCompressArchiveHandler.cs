@@ -106,6 +106,7 @@ public sealed class SharpCompressArchiveHandler
                 var outPath = PathSecurity.EnsureSafeExtractionPath(destinationFolder, entryPath);
                 if (entry.IsDirectory)
                 {
+                    PathSecurity.EnsureNoReparsePointInPath(destinationFolder, outPath);
                     Directory.CreateDirectory(outPath);
                     continue;
                 }
@@ -113,6 +114,7 @@ public sealed class SharpCompressArchiveHandler
                 var parentDir = Path.GetDirectoryName(outPath);
                 if (!string.IsNullOrWhiteSpace(parentDir))
                 {
+                    PathSecurity.EnsureNoReparsePointInPath(destinationFolder, parentDir);
                     Directory.CreateDirectory(parentDir);
                 }
 
@@ -121,6 +123,7 @@ public sealed class SharpCompressArchiveHandler
                     throw new IOException($"File already exists: {outPath}. Use overwrite mode to replace.");
                 }
 
+                PathSecurity.EnsureNoReparsePointInPath(destinationFolder, outPath);
                 await using var input = entry.OpenEntryStream();
                 await using var output = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20, useAsync: true);
                 var buffer = new byte[128 * 1024];

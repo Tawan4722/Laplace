@@ -66,6 +66,7 @@ public sealed class ArchiveExtractor
 
                 if (entry.IsDirectory)
                 {
+                    PathSecurity.EnsureNoReparsePointInPath(destinationFolder, outPath);
                     Directory.CreateDirectory(outPath);
                     TryRestoreDirectoryMetadata(outPath, entry);
                     continue;
@@ -74,6 +75,7 @@ public sealed class ArchiveExtractor
                 var parentDir = Path.GetDirectoryName(outPath);
                 if (!string.IsNullOrWhiteSpace(parentDir))
                 {
+                    PathSecurity.EnsureNoReparsePointInPath(destinationFolder, parentDir);
                     Directory.CreateDirectory(parentDir);
                 }
 
@@ -82,6 +84,7 @@ public sealed class ArchiveExtractor
                     throw new IOException($"File already exists: {outPath}. Use overwrite mode to replace.");
                 }
 
+                PathSecurity.EnsureNoReparsePointInPath(destinationFolder, outPath);
                 await using var output = new FileStream(
                     outPath,
                     FileMode.Create,

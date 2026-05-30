@@ -92,6 +92,7 @@ public sealed class WindowsNativeArchiveHandler
                 throw new IOException($"File already exists where a directory is required: {destination}");
             }
 
+            PathSecurity.EnsureNoReparsePointInPath(destinationFolder, destination);
             Directory.CreateDirectory(destination);
         }
 
@@ -109,9 +110,11 @@ public sealed class WindowsNativeArchiveHandler
             var parent = Path.GetDirectoryName(destination);
             if (!string.IsNullOrWhiteSpace(parent))
             {
+                PathSecurity.EnsureNoReparsePointInPath(destinationFolder, parent);
                 Directory.CreateDirectory(parent);
             }
 
+            PathSecurity.EnsureNoReparsePointInPath(destinationFolder, destination);
             await using (var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, useAsync: true))
             await using (var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20, useAsync: true))
             {

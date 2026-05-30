@@ -6,21 +6,23 @@ namespace Laplace.Core.Services;
 
 internal static class ArchiveEncryption
 {
-    public const int SaltSizeBytes = 16;
+    public const int MinimumSaltSizeBytes = 16;
+    public const int GeneratedSaltSizeBytes = 32;
     public const int KeySizeBytes = 32;
     public const int NonceSizeBytes = 12;
     public const int TagSizeBytes = 16;
 
-    public static byte[] CreateSalt() => RandomNumberGenerator.GetBytes(SaltSizeBytes);
+    public static byte[] CreateSalt() => RandomNumberGenerator.GetBytes(GeneratedSaltSizeBytes);
 
     public static byte[] DeriveKey(PasswordContext password, byte[] salt, int iterations)
     {
-        if (salt.Length < SaltSizeBytes)
+        if (salt.Length < MinimumSaltSizeBytes)
         {
             throw new InvalidDataException("Encrypted archive salt is invalid.");
         }
 
-        if (iterations <= 0)
+        if (iterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
+            iterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
         {
             throw new InvalidDataException("Encrypted archive key derivation settings are invalid.");
         }

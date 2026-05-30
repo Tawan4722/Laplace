@@ -74,6 +74,7 @@ public sealed class ZipArchiveHandler
             var outPath = PathSecurity.EnsureSafeExtractionPath(destinationFolder, entry.Name);
             if (entry.IsDirectory)
             {
+                PathSecurity.EnsureNoReparsePointInPath(destinationFolder, outPath);
                 Directory.CreateDirectory(outPath);
                 continue;
             }
@@ -81,6 +82,7 @@ public sealed class ZipArchiveHandler
             var parentDir = Path.GetDirectoryName(outPath);
             if (!string.IsNullOrWhiteSpace(parentDir))
             {
+                PathSecurity.EnsureNoReparsePointInPath(destinationFolder, parentDir);
                 Directory.CreateDirectory(parentDir);
             }
 
@@ -89,6 +91,7 @@ public sealed class ZipArchiveHandler
                 throw new IOException($"File already exists: {outPath}. Use overwrite mode to replace.");
             }
 
+            PathSecurity.EnsureNoReparsePointInPath(destinationFolder, outPath);
             try
             {
                 await using var input = zip.GetInputStream(entry);
