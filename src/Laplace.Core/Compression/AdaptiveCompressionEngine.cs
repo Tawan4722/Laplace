@@ -39,7 +39,7 @@ public sealed class AdaptiveCompressionEngine
 
     public IReadOnlyList<CompressionMethod> GetCandidates(CompressionMode mode, CompressionAnalysis analysis)
     {
-        if (analysis.LikelyAlreadyCompressed)
+        if (analysis.LikelyAlreadyCompressed && mode != CompressionMode.Intensive)
         {
             return [CompressionMethod.Raw, CompressionMethod.Lz4Fast, CompressionMethod.ZstdFast];
         }
@@ -49,6 +49,7 @@ public sealed class AdaptiveCompressionEngine
             CompressionMode.Fast => [CompressionMethod.Lz4Fast, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Raw],
             CompressionMode.Balanced => [CompressionMethod.ZstdBalanced, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
             CompressionMode.Maximum => [CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Raw],
+            CompressionMode.Intensive => [CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
             CompressionMode.Auto => GetAutoCandidates(analysis),
             _ => [CompressionMethod.ZstdBalanced, CompressionMethod.Raw]
         };
@@ -67,6 +68,7 @@ public sealed class AdaptiveCompressionEngine
             CompressionMode.Fast => (0.25, 0.55, 0.10, 0.10),
             CompressionMode.Balanced => (0.45, 0.35, 0.10, 0.10),
             CompressionMode.Maximum => (0.70, 0.15, 0.10, 0.05),
+            CompressionMode.Intensive => (0.85, 0.05, 0.05, 0.05),
             _ => (0.50, 0.30, 0.10, 0.10)
         };
 

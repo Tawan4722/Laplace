@@ -4,6 +4,7 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+- Added an `intensive` compression mode for ratio-focused LPC candidate testing and surfaced it in CLI, desktop create settings, and documentation.
 - Added single-input auto `.lpc` naming for CLI compression and collision-safe desktop create defaults.
 - Added password confirmation for interactive encrypted archive creation.
 - Added CLI black-box regression coverage for help output, unknown commands, LPC round trips, encrypted password-file workflows, and invalid argument handling.

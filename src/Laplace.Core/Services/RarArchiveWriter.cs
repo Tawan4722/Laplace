@@ -147,7 +147,7 @@ public sealed class RarArchiveWriter
         return mode switch
         {
             CompressionMode.Fast => 1,
-            CompressionMode.Maximum => 5,
+            CompressionMode.Maximum or CompressionMode.Intensive => 5,
             _ => 3
         };
     }

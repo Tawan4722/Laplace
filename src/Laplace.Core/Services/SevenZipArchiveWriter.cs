@@ -84,7 +84,7 @@ public sealed class SevenZipArchiveWriter
         return mode switch
         {
             CompressionMode.Fast => 1,
-            CompressionMode.Maximum => 9,
+            CompressionMode.Maximum or CompressionMode.Intensive => 9,
             _ => 6
         };
     }

@@ -80,11 +80,12 @@ Modes:
 - `fast`
 - `balanced`
 - `maximum`
+- `intensive`
 - `auto`
 
 Blocks that do not get smaller after compression are stored as `RAW`, so incompressible data is not blindly expanded.
 
-See [docs/ADAPTIVE_COMPRESSION.md](docs/ADAPTIVE_COMPRESSION.md).
+See [docs/ADAPTIVE_COMPRESSION.md](docs/ADAPTIVE_COMPRESSION.md), which also tracks future codec candidates such as Blosc, ZPAQ, and BSC.
 
 ## Passwords And Encryption
 
@@ -155,7 +156,7 @@ laplace <command>
 
 ```powershell
 laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] `
-  --mode fast|balanced|maximum|auto `
+  --mode fast|balanced|maximum|intensive|auto `
   --block-size 4M|8M|16M|32M|64M `
   --solid on|off|auto `
   --threads <number> `
@@ -170,6 +171,7 @@ laplace compress .\report.pdf --mode balanced
 laplace compress .\folder .\archive.lpc --mode balanced --verify
 laplace compress .\folder .\draft.lpc --mode fast --no-verify
 laplace compress-beside .\report.pdf --mode balanced
+laplace compress .\dataset .\dataset.lpc --mode intensive
 laplace compress .\folder .\archive.zip --mode maximum
 laplace compress .\folder .\archive.7z --mode maximum
 laplace compress .\folder .\archive.rar --mode maximum
@@ -182,7 +184,7 @@ laplace compress .\folder .\secure.lpc --password-file .\password.txt
 
 ```powershell
 laplace estimate <input_path...> `
-  --mode fast|balanced|maximum|auto `
+  --mode fast|balanced|maximum|intensive|auto `
   --block-size 4M|8M|16M|32M|64M
 ```
 

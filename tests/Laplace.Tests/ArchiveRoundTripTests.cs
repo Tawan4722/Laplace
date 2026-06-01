@@ -1,4 +1,5 @@
 using Laplace.Compression;
+using Laplace.Core.Compression;
 using Laplace.Core.Exceptions;
 using Laplace.Core.Enums;
 using Laplace.Core.Models;
@@ -196,6 +197,27 @@ public sealed class ArchiveRoundTripTests
 
         Assert.True(estimate.EstimatedRatio > 0.95);
         Assert.Contains(CompressionMethod.Raw.ToString(), estimate.LikelyMethods);
+    }
+
+    [Fact]
+    public void IntensiveMode_UsesRatioFocusedCandidates_EvenForAlreadyCompressedInputs()
+    {
+        var engine = new AdaptiveCompressionEngine();
+        var analysis = new CompressionAnalysis
+        {
+            FileTypeCategory = FileTypeCategory.Archive,
+            Entropy = 7.95,
+            LikelyAlreadyCompressed = true
+        };
+
+        var candidates = engine.GetCandidates(CompressionMode.Intensive, analysis);
+
+        Assert.Equal(CompressionMethod.LzmaMax, candidates[0]);
+        Assert.Contains(CompressionMethod.ZstdHigh, candidates);
+        Assert.Contains(CompressionMethod.Raw, candidates);
+        Assert.True(
+            engine.Score(CompressionMode.Intensive, CompressionMethod.LzmaMax, analysis, 0.40, 0.25, 0.72) >
+            engine.Score(CompressionMode.Fast, CompressionMethod.LzmaMax, analysis, 0.40, 0.25, 0.72));
     }
 
     [Fact]

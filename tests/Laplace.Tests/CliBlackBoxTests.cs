@@ -13,6 +13,7 @@ public sealed class CliBlackBoxTests
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("Laplace CLI", result.StandardOutput);
         Assert.Contains("laplace compress", result.StandardOutput);
+        Assert.Contains("intensive", result.StandardOutput);
     }
 
     [Fact]

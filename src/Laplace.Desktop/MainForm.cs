@@ -828,7 +828,7 @@ internal sealed class CreateArchiveDialog : Form
             options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         }
 
-        ConfigureCombo(_mode, ["Balanced", "Fast", "Maximum", "Auto"], 0);
+        ConfigureCombo(_mode, ["Balanced", "Fast", "Maximum", "Intensive", "Auto"], 0);
         ConfigureCombo(_blockSize, ["8M", "4M", "16M", "32M", "64M"], 0);
         ConfigureCombo(_solid, ["Auto", "On", "Off"], 0);
         _threads.Minimum = 1;
@@ -1050,6 +1050,7 @@ internal sealed class CreateArchiveDialog : Form
         {
             "fast" => CompressionMode.Fast,
             "maximum" => CompressionMode.Maximum,
+            "intensive" => CompressionMode.Intensive,
             "auto" => CompressionMode.Auto,
             _ => CompressionMode.Balanced
         };

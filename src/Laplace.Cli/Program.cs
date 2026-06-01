@@ -215,7 +215,7 @@ internal static class Program
 
         if (positional.Count < 1)
         {
-            Console.Error.WriteLine("Usage: laplace estimate <input_path...> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
+            Console.Error.WriteLine("Usage: laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
             return 1;
         }
 
@@ -640,6 +640,7 @@ internal static class Program
             "fast" => CompressionMode.Fast,
             "balanced" => CompressionMode.Balanced,
             "maximum" => CompressionMode.Maximum,
+            "intensive" => CompressionMode.Intensive,
             "auto" => CompressionMode.Auto,
             _ => throw new ArgumentOutOfRangeException(nameof(mode), $"Unknown mode: {mode}")
         };
@@ -685,9 +686,9 @@ internal static class Program
     {
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
+        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
         Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace info <input_archive> [--password <value>|--password-file <path>]");
