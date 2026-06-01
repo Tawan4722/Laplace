@@ -774,12 +774,15 @@ internal sealed class CreateArchiveDialog : Form
     private readonly CheckBox _verify = new();
     private readonly CheckBox _encrypt = new();
     private readonly TextBox _password = new();
+    private readonly TextBox _confirmPassword = new();
+    private bool _autoOutputPath = true;
+    private bool _updatingOutputPath;
 
     public CreateArchiveDialog(IEnumerable<string> initialInputs)
     {
         Text = "Add to archive";
-        ClientSize = new Size(720, 500);
-        MinimumSize = new Size(640, 430);
+        ClientSize = new Size(720, 528);
+        MinimumSize = new Size(640, 460);
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 9F);
 
@@ -791,7 +794,7 @@ internal sealed class CreateArchiveDialog : Form
             ColumnCount = 1
         };
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 210));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 238));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
         _inputs.Dock = DockStyle.Fill;
@@ -808,7 +811,11 @@ internal sealed class CreateArchiveDialog : Form
         buttons.Controls.Add(DialogButton("Add files", AddFiles));
         buttons.Controls.Add(DialogButton("Add folder", AddFolder));
         buttons.Controls.Add(DialogButton("Remove", (_, _) => RemoveSelectedInputs()));
-        buttons.Controls.Add(DialogButton("Clear", (_, _) => _inputs.Items.Clear()));
+        buttons.Controls.Add(DialogButton("Clear", (_, _) =>
+        {
+            _inputs.Items.Clear();
+            UpdateDefaultOutputPath();
+        }));
         inputPanel.Controls.Add(_inputs, 0, 0);
         inputPanel.Controls.Add(buttons, 1, 0);
 
@@ -816,7 +823,7 @@ internal sealed class CreateArchiveDialog : Form
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        for (var i = 0; i < 7; i++)
+        for (var i = 0; i < 8; i++)
         {
             options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         }
@@ -829,6 +836,7 @@ internal sealed class CreateArchiveDialog : Form
         _threads.Value = Math.Max(1, Environment.ProcessorCount);
         _threads.Width = 110;
         _password.UseSystemPasswordChar = true;
+        _confirmPassword.UseSystemPasswordChar = true;
         _verify.Text = "Verify after archiving";
         _verify.Checked = true;
         _verify.AutoSize = true;
@@ -848,11 +856,23 @@ internal sealed class CreateArchiveDialog : Form
         options.Controls.Add(_threads, 1, 4);
         options.Controls.Add(FormLabel("Password"), 0, 5);
         options.Controls.Add(_password, 1, 5);
-        options.Controls.Add(_verify, 1, 6);
-        options.Controls.Add(_encrypt, 2, 6);
+        options.Controls.Add(FormLabel("Confirm"), 0, 6);
+        options.Controls.Add(_confirmPassword, 1, 6);
+        options.Controls.Add(_verify, 1, 7);
+        options.Controls.Add(_encrypt, 2, 7);
         _output.Dock = DockStyle.Fill;
         _password.Dock = DockStyle.Left;
         _password.Width = 220;
+        _confirmPassword.Dock = DockStyle.Left;
+        _confirmPassword.Width = 220;
+        _output.TextChanged += (_, _) =>
+        {
+            if (!_updatingOutputPath)
+            {
+                _autoOutputPath = false;
+            }
+        };
+        UpdateDefaultOutputPath();
 
         var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 92 };
@@ -879,7 +899,7 @@ internal sealed class CreateArchiveDialog : Form
         SolidMode = ParseSolidMode(_solid.Text),
         Threads = (int)_threads.Value,
         VerifyAfterCompression = _verify.Checked,
-        Password = PasswordContext.FromNullable(_password.Text)
+        Password = _encrypt.Checked ? PasswordContext.FromNullable(_password.Text) : null
     };
 
     private void AddFiles(object? sender, EventArgs e)
@@ -911,10 +931,7 @@ internal sealed class CreateArchiveDialog : Form
             }
         }
 
-        if (string.IsNullOrWhiteSpace(_output.Text))
-        {
-            _output.Text = DefaultArchiveName();
-        }
+        UpdateDefaultOutputPath();
     }
 
     private void RemoveSelectedInputs()
@@ -923,6 +940,8 @@ internal sealed class CreateArchiveDialog : Form
         {
             _inputs.Items.Remove(item);
         }
+
+        UpdateDefaultOutputPath();
     }
 
     private void BrowseOutput(object? sender, EventArgs e)
@@ -938,6 +957,7 @@ internal sealed class CreateArchiveDialog : Form
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
+            _autoOutputPath = false;
             _output.Text = dialog.FileName;
         }
     }
@@ -962,24 +982,46 @@ internal sealed class CreateArchiveDialog : Form
         {
             ShowDialogMessage("Enter a password or turn off encryption.");
             DialogResult = DialogResult.None;
+            return;
+        }
+
+        if (_encrypt.Checked)
+        {
+            try
+            {
+                ArchivePasswordPolicy.EnsureConfirmationMatches(_password.Text, _confirmPassword.Text);
+            }
+            catch (ArgumentException ex)
+            {
+                ShowDialogMessage(ex.Message);
+                DialogResult = DialogResult.None;
+            }
         }
     }
 
     private string DefaultArchiveName()
     {
-        if (_inputs.Items.Count == 1)
+        return ArchivePathHelper.ResolveDefaultArchivePath(
+            _inputs.Items.Cast<string>(),
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+    }
+
+    private void UpdateDefaultOutputPath()
+    {
+        if (!_autoOutputPath)
         {
-            var path = _inputs.Items[0]?.ToString() ?? "archive";
-            var directory = Directory.Exists(path)
-                ? Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path))
-                : Path.GetDirectoryName(path);
-            var name = Directory.Exists(path)
-                ? new DirectoryInfo(path).Name
-                : Path.GetFileNameWithoutExtension(path);
-            return Path.Combine(directory ?? Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), $"{name}.lpc");
+            return;
         }
 
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "archive.lpc");
+        _updatingOutputPath = true;
+        try
+        {
+            _output.Text = DefaultArchiveName();
+        }
+        finally
+        {
+            _updatingOutputPath = false;
+        }
     }
 
     private static Button DialogButton(string text, EventHandler handler)

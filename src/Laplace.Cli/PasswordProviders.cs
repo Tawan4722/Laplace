@@ -90,7 +90,7 @@ internal sealed class WindowsPopupPasswordProvider : IPasswordProvider
                 Top = 48,
                 Width = 370,
                 Height = 20,
-                Text = "Password"
+                Text = $"{request.Operation} password"
             };
             var passwordBox = new TextBox
             {

@@ -83,14 +83,41 @@ internal static class Program
             positional.Add(args[i]);
         }
 
-        if (positional.Count < 2)
+        if (positional.Count == 0)
         {
-            Console.Error.WriteLine("Usage: laplace compress <input_path...> <output.lpc|output.zip|output.7z|output.rar> [options] [--encrypt|--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [options] [--encrypt|--password <value>|--password-file <path>]");
             return 1;
         }
 
-        var outputPath = positional[^1];
-        var inputPaths = positional.Take(positional.Count - 1).ToArray();
+        string outputPath;
+        string[] inputPaths;
+        if (positional.Count == 1)
+        {
+            var inputPath = Path.GetFullPath(positional[0]);
+            if (!File.Exists(inputPath) && !Directory.Exists(inputPath))
+            {
+                Console.Error.WriteLine($"Input path not found: {inputPath}");
+                return 1;
+            }
+
+            inputPaths = [inputPath];
+            outputPath = ArchivePathHelper.ResolveBesideArchivePath(inputPath);
+        }
+        else
+        {
+            outputPath = positional[^1];
+            inputPaths = positional.Take(positional.Count - 1).ToArray();
+            if (File.Exists(outputPath) || Directory.Exists(outputPath))
+            {
+                var outputExtension = Path.GetExtension(outputPath);
+                if (!IsSupportedWriteExtension(outputExtension))
+                {
+                    Console.Error.WriteLine("Multiple input paths require an explicit output archive path ending in .lpc, .zip, .7z, or .rar.");
+                    return 1;
+                }
+            }
+        }
+
         var optionArgs = args.Skip(optionStart).ToArray();
         var options = ParseCreateOptions(optionArgs);
         var passwordOptions = ParsePasswordOptions(optionArgs);
@@ -99,7 +126,8 @@ internal static class Program
             options.Password = await ResolvePasswordAsync(
                 passwordOptions,
                 new PasswordRequest(outputPath, "Create archive", IsWrite: true),
-                requirePassword: true).ConfigureAwait(false);
+                requirePassword: true,
+                confirmInteractivePassword: passwordOptions.EncryptRequested && !passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -138,7 +166,7 @@ internal static class Program
         }
 
         var optionArgs = args.Skip(1).ToArray();
-        var outputPath = ResolveBesideArchivePath(inputPath);
+        var outputPath = ArchivePathHelper.ResolveBesideArchivePath(inputPath);
         var options = ParseCreateOptions(optionArgs);
         var passwordOptions = ParsePasswordOptions(optionArgs);
         if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
@@ -146,7 +174,8 @@ internal static class Program
             options.Password = await ResolvePasswordAsync(
                 passwordOptions,
                 new PasswordRequest(outputPath, "Create archive", IsWrite: true),
-                requirePassword: true).ConfigureAwait(false);
+                requirePassword: true,
+                confirmInteractivePassword: passwordOptions.EncryptRequested && !passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         }
 
         var stopwatch = Stopwatch.StartNew();
@@ -487,7 +516,8 @@ internal static class Program
     private static async Task<PasswordContext?> ResolvePasswordAsync(
         ParsedPasswordOptions options,
         PasswordRequest request,
-        bool requirePassword)
+        bool requirePassword,
+        bool confirmInteractivePassword = false)
     {
         var explicitPassword = ReadExplicitPassword(options);
         if (explicitPassword is not null)
@@ -505,6 +535,17 @@ internal static class Program
         if (password is null)
         {
             throw new ArchivePasswordRequiredException(request.ArchivePath);
+        }
+
+        if (confirmInteractivePassword)
+        {
+            var confirmation = await provider.GetPasswordAsync(request with { Operation = "Confirm archive" }).ConfigureAwait(false);
+            if (confirmation is null)
+            {
+                throw new ArchivePasswordRequiredException(request.ArchivePath);
+            }
+
+            ArchivePasswordPolicy.EnsureConfirmationMatches(password, confirmation);
         }
 
         return password;
@@ -644,8 +685,8 @@ internal static class Program
     {
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> <output.lpc|output.zip|output.7z|output.rar> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
         Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
@@ -752,46 +793,12 @@ internal static class Program
         return unit == 0 ? $"{bytes} B" : $"{value:F2} {units[unit]}";
     }
 
-    private static string ResolveBesideArchivePath(string inputPath)
+    private static bool IsSupportedWriteExtension(string extension)
     {
-        var fullPath = Path.GetFullPath(inputPath);
-        var parent = Path.GetDirectoryName(fullPath);
-        if (string.IsNullOrWhiteSpace(parent))
-        {
-            parent = Directory.GetCurrentDirectory();
-        }
-
-        var name = Directory.Exists(fullPath)
-            ? new DirectoryInfo(fullPath).Name
-            : Path.GetFileNameWithoutExtension(fullPath);
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            name = Path.GetFileName(fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        }
-
-        return GetAvailableArchivePath(Path.Combine(parent, $"{name}.lpc"));
-    }
-
-    private static string GetAvailableArchivePath(string preferredPath)
-    {
-        if (!File.Exists(preferredPath) && !Directory.Exists(preferredPath))
-        {
-            return preferredPath;
-        }
-
-        var directory = Path.GetDirectoryName(preferredPath) ?? Directory.GetCurrentDirectory();
-        var name = Path.GetFileNameWithoutExtension(preferredPath);
-        var extension = Path.GetExtension(preferredPath);
-        for (var i = 2; i < 10_000; i++)
-        {
-            var candidate = Path.Combine(directory, $"{name} ({i}){extension}");
-            if (!File.Exists(candidate) && !Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        throw new IOException($"Could not find an available archive name beside: {preferredPath}");
+        return extension.Equals(".lpc", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".7z", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".rar", StringComparison.OrdinalIgnoreCase);
     }
 
     private static int OpenCommand(string[] args)

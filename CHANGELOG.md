@@ -4,6 +4,10 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+- Added single-input auto `.lpc` naming for CLI compression and collision-safe desktop create defaults.
+- Added password confirmation for interactive encrypted archive creation.
+- Added CLI black-box regression coverage for help output, unknown commands, LPC round trips, encrypted password-file workflows, and invalid argument handling.
+
 ## 1.6.3
 
 - Hardened archive extraction path validation against absolute paths, traversal variants, Windows reserved names, alternate data streams, and unsafe path segments.

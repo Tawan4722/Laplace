@@ -154,19 +154,21 @@ laplace <command>
 ### Compress
 
 ```powershell
-laplace compress <input_path...> <output.lpc|output.zip|output.7z|output.rar> `
+laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] `
   --mode fast|balanced|maximum|auto `
   --block-size 4M|8M|16M|32M|64M `
   --solid on|off|auto `
   --threads <number> `
-  --verify
+  --verify|--no-verify
 ```
 
 Examples:
 
 ```powershell
 laplace estimate .\folder --mode auto
+laplace compress .\report.pdf --mode balanced
 laplace compress .\folder .\archive.lpc --mode balanced --verify
+laplace compress .\folder .\draft.lpc --mode fast --no-verify
 laplace compress-beside .\report.pdf --mode balanced
 laplace compress .\folder .\archive.zip --mode maximum
 laplace compress .\folder .\archive.7z --mode maximum
