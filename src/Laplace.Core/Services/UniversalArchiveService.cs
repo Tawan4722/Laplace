@@ -182,6 +182,8 @@ public sealed class UniversalArchiveService
             MethodsUsed = info.MethodsUsed,
             CreatedUtc = info.CreatedUtc,
             IsEncrypted = info.IsEncrypted,
+            IsLocked = info.IsLocked,
+            Comment = info.Comment,
             Notes = info.IsEncrypted ? "LPC payload blocks are encrypted; filenames and metadata remain visible." : string.Empty
         };
     }

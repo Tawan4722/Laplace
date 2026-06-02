@@ -44,6 +44,27 @@ public sealed class ArchiveWriter
             DefaultBlockSize = (uint)options.BlockSizeBytes,
             Comment = options.Comment
         };
+        if (options.EncryptMetadata)
+        {
+            throw new NotSupportedException("LPC metadata encryption is reserved for LPCv3 but is not implemented yet.");
+        }
+
+        if (options.VolumeSizeBytes is not null)
+        {
+            throw new NotSupportedException("LPC multi-volume output is reserved for LPCv3 but is not implemented yet.");
+        }
+
+        if (options.RecoveryPercent > 0)
+        {
+            throw new NotSupportedException("LPC recovery records are reserved for LPCv3 but are not implemented yet.");
+        }
+
+        if (options.LockArchive)
+        {
+            header.FormatVersion = 3;
+            header.ArchiveFlags |= ArchiveHeader.LockedFlag;
+        }
+
         var encryptionKey = Array.Empty<byte>();
         if (options.Password is not null)
         {
@@ -54,7 +75,7 @@ public sealed class ArchiveWriter
                     $"Key derivation iterations must be between {CreateArchiveOptions.MinimumKeyDerivationIterations:N0} and {CreateArchiveOptions.MaximumKeyDerivationIterations:N0}.");
             }
 
-            header.FormatVersion = 2;
+            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)2);
             header.ArchiveFlags |= ArchiveHeader.EncryptionFlag;
             header.EncryptionAlgorithmId = ArchiveHeader.EncryptionAlgorithmAes256Gcm;
             header.KeyDerivationIterations = options.KeyDerivationIterations;

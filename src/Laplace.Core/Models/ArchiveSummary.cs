@@ -13,5 +13,10 @@ public sealed class ArchiveSummary
     public string[] MethodsUsed { get; init; } = [];
     public DateTime? CreatedUtc { get; init; }
     public bool IsEncrypted { get; init; }
+    public bool IsLocked { get; init; }
+    public bool IsMetadataEncrypted { get; init; }
+    public bool HasRecoveryRecord { get; init; }
+    public bool IsVolume { get; init; }
+    public string Comment { get; init; } = string.Empty;
     public string Notes { get; init; } = string.Empty;
 }

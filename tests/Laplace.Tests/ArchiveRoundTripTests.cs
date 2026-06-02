@@ -505,6 +505,94 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public async Task LpcMutation_AddRenameDeleteCommentAndLock_WorkThroughRewrite()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "alpha.txt");
+        var addedFile = Path.Combine(root, "beta.txt");
+        await File.WriteAllTextAsync(sourceFile, "alpha v1");
+        await File.WriteAllTextAsync(addedFile, "beta v1");
+        var archivePath = Path.Combine(root, "payload.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var registry = new CompressorRegistry();
+        var service = new UniversalArchiveService(registry);
+        var mutator = new LpcArchiveMutationService(registry);
+
+        await service.CompressAsync([sourceFile], archivePath, new CreateArchiveOptions { VerifyAfterCompression = false });
+        await mutator.AddAsync(archivePath, [addedFile], new MutateArchiveOptions());
+        await mutator.RenameAsync(archivePath, "beta.txt", "renamed/beta.txt", new MutateArchiveOptions());
+        await mutator.DeleteAsync(archivePath, ["alpha.txt"], new MutateArchiveOptions());
+        await mutator.SetCommentAsync(archivePath, "managed archive", new MutateArchiveOptions());
+
+        var info = service.Info(archivePath);
+        Assert.Equal("managed archive", info.Comment);
+        Assert.False(info.IsLocked);
+        Assert.Contains(service.List(archivePath), x => x.Path == "renamed/beta.txt");
+        Assert.DoesNotContain(service.List(archivePath), x => x.Path == "alpha.txt");
+        Assert.True((await service.TestAsync(archivePath)).Success);
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+        Assert.Equal("beta v1", await File.ReadAllTextAsync(Path.Combine(extractPath, "renamed", "beta.txt")));
+
+        await mutator.LockAsync(archivePath, new MutateArchiveOptions());
+        Assert.True(service.Info(archivePath).IsLocked);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mutator.DeleteAsync(archivePath, ["renamed/beta.txt"], new MutateArchiveOptions()));
+    }
+
+    [Fact]
+    public async Task LpcMutation_Freshen_UpdatesExistingEntryOnlyWhenInputIsNewer()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "fresh.txt");
+        await File.WriteAllTextAsync(sourceFile, "old");
+        var archivePath = Path.Combine(root, "fresh.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var registry = new CompressorRegistry();
+        var service = new UniversalArchiveService(registry);
+        var mutator = new LpcArchiveMutationService(registry);
+
+        await service.CompressAsync([sourceFile], archivePath, new CreateArchiveOptions { VerifyAfterCompression = false });
+        await Task.Delay(1100);
+        await File.WriteAllTextAsync(sourceFile, "new");
+        await mutator.FreshenAsync(archivePath, [sourceFile], new MutateArchiveOptions());
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+        Assert.Equal("new", await File.ReadAllTextAsync(Path.Combine(extractPath, "fresh.txt")));
+    }
+
+    [Fact]
+    public async Task LpcMutation_EncryptedArchive_RequiresPasswordAndPreservesEncryption()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "secret.txt");
+        var addedFile = Path.Combine(root, "added.txt");
+        await File.WriteAllTextAsync(sourceFile, "secret");
+        await File.WriteAllTextAsync(addedFile, "added");
+        var archivePath = Path.Combine(root, "secret.lpc");
+        var password = new PasswordContext("correct horse battery staple");
+        var registry = new CompressorRegistry();
+        var service = new UniversalArchiveService(registry);
+        var mutator = new LpcArchiveMutationService(registry);
+
+        await service.CompressAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Password = password,
+            VerifyAfterCompression = false
+        });
+
+        await Assert.ThrowsAsync<ArchivePasswordRequiredException>(() =>
+            mutator.AddAsync(archivePath, [addedFile], new MutateArchiveOptions()));
+
+        await mutator.AddAsync(archivePath, [addedFile], new MutateArchiveOptions { Password = password });
+
+        var info = service.Info(archivePath, password);
+        Assert.True(info.IsEncrypted);
+        Assert.Contains(service.List(archivePath, password), x => x.Path == "added.txt");
+        Assert.True((await service.TestAsync(archivePath, password)).Success);
+    }
+
+    [Fact]
     public async Task SevenZip_SelectedFileExtraction_ExtractsOnlyChosenFile()
     {
         var root = CreateTempFolder();

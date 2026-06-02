@@ -104,6 +104,42 @@ public sealed class CliBlackBoxTests
     }
 
     [Fact]
+    public async Task MutationCommands_AddCommentFindDelete_Lpc_WorkThroughCli()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "base.txt");
+            var addedFile = Path.Combine(root, "added.txt");
+            var archivePath = Path.Combine(root, "mut.lpc");
+            await File.WriteAllTextAsync(sourceFile, "base payload");
+            await File.WriteAllTextAsync(addedFile, "added payload needle");
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceFile, archivePath, "--no-verify"));
+            AssertSuccess(await RunLaplaceAsync("add", archivePath, addedFile));
+            AssertSuccess(await RunLaplaceAsync("comment", archivePath, "--set", "cli mutation"));
+
+            var info = await RunLaplaceAsync("info", archivePath);
+            AssertSuccess(info);
+            Assert.Contains("Comment: cli mutation", info.StandardOutput);
+
+            var find = await RunLaplaceAsync("find", archivePath, "--name", "*.txt", "--text", "needle");
+            AssertSuccess(find);
+            Assert.Contains("added.txt", find.StandardOutput);
+
+            AssertSuccess(await RunLaplaceAsync("delete", archivePath, "base.txt"));
+            var list = await RunLaplaceAsync("list", archivePath);
+            AssertSuccess(list);
+            Assert.DoesNotContain("base.txt", list.StandardOutput);
+            Assert.Contains("added.txt", list.StandardOutput);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task Compress_SingleFileWithoutOutput_CreatesLpcBesideInput()
     {
         var root = CreateTempFolder();

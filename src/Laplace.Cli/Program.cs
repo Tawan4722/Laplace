@@ -36,6 +36,8 @@ internal static class Program
         var reader = new ArchiveReader();
         var extractor = new ArchiveExtractor(registry, reader);
         var archives = new UniversalArchiveService(registry);
+        var mutator = new LpcArchiveMutationService(registry);
+        var rarTools = new RarToolCommandService();
 
         try
         {
@@ -50,6 +52,15 @@ internal static class Program
                 "list" => await ListAsync(archives, remaining).ConfigureAwait(false),
                 "info" => await InfoAsync(archives, remaining).ConfigureAwait(false),
                 "test" => await TestAsync(archives, remaining).ConfigureAwait(false),
+                "add" => await AddAsync(mutator, rarTools, remaining).ConfigureAwait(false),
+                "freshen" => await FreshenAsync(mutator, rarTools, remaining).ConfigureAwait(false),
+                "delete" => await DeleteAsync(mutator, rarTools, remaining).ConfigureAwait(false),
+                "rename" => await RenameAsync(mutator, remaining).ConfigureAwait(false),
+                "comment" => await CommentAsync(mutator, rarTools, remaining).ConfigureAwait(false),
+                "lock" => await LockAsync(mutator, rarTools, remaining).ConfigureAwait(false),
+                "find" => await FindAsync(mutator, archives, remaining).ConfigureAwait(false),
+                "view" => await ViewAsync(mutator, remaining).ConfigureAwait(false),
+                "repair" => await RepairAsync(rarTools, remaining).ConfigureAwait(false),
                 "benchmark" => await BenchmarkAsync(writer, extractor, reader, remaining).ConfigureAwait(false),
                 "open" => OpenCommand(remaining),
                 "extract-here" => await ExtractHereAsync(archives, remaining).ConfigureAwait(false),
@@ -370,6 +381,321 @@ internal static class Program
         return 2;
     }
 
+    private static async Task<int> AddAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
+    {
+        var (archivePath, inputs, options, passwordOptions) = await ParseMutationCommandAsync(args, "laplace add <archive> <input_path...> [options]").ConfigureAwait(false);
+        if (IsRarArchive(archivePath))
+        {
+            await rarTools.AddAsync(archivePath, inputs).ConfigureAwait(false);
+            Console.WriteLine("RAR archive updated.");
+            return 0;
+        }
+
+        EnsureLpcArchive(archivePath);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            "Update archive",
+            passwordOptions,
+            options.Password,
+            async password =>
+            {
+                options.Password = password;
+                await mutator.AddAsync(archivePath, inputs, options).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        Console.WriteLine("Archive updated.");
+        return 0;
+    }
+
+    private static async Task<int> FreshenAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
+    {
+        var (archivePath, inputs, options, passwordOptions) = await ParseMutationCommandAsync(args, "laplace freshen <archive> <input_path...> [options]").ConfigureAwait(false);
+        if (IsRarArchive(archivePath))
+        {
+            await rarTools.FreshenAsync(archivePath, inputs).ConfigureAwait(false);
+            Console.WriteLine("RAR archive freshened.");
+            return 0;
+        }
+
+        EnsureLpcArchive(archivePath);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            "Freshen archive",
+            passwordOptions,
+            options.Password,
+            async password =>
+            {
+                options.Password = password;
+                await mutator.FreshenAsync(archivePath, inputs, options).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        Console.WriteLine("Archive freshened.");
+        return 0;
+    }
+
+    private static async Task<int> DeleteAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
+    {
+        var (archivePath, targets, options, passwordOptions) = await ParseMutationCommandAsync(args, "laplace delete <archive> <entry_path_or_id...> [options]").ConfigureAwait(false);
+        if (IsRarArchive(archivePath))
+        {
+            await rarTools.DeleteAsync(archivePath, targets).ConfigureAwait(false);
+            Console.WriteLine("RAR entries deleted.");
+            return 0;
+        }
+
+        EnsureLpcArchive(archivePath);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            "Delete archive entries",
+            passwordOptions,
+            options.Password,
+            async password =>
+            {
+                options.Password = password;
+                await mutator.DeleteAsync(archivePath, targets, options).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        Console.WriteLine("Archive entries deleted.");
+        return 0;
+    }
+
+    private static async Task<int> RenameAsync(LpcArchiveMutationService mutator, string[] args)
+    {
+        var positional = GetPositionalArgs(args);
+        if (positional.Count < 3)
+        {
+            Console.Error.WriteLine("Usage: laplace rename <archive.lpc> <entry_path_or_id> <new_entry_path> [options]");
+            return 1;
+        }
+
+        var archivePath = positional[0];
+        EnsureLpcArchive(archivePath);
+        var passwordOptions = ParsePasswordOptions(args);
+        var options = await ParseMutationOptionsAsync(archivePath, args, passwordOptions).ConfigureAwait(false);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            "Rename archive entry",
+            passwordOptions,
+            options.Password,
+            async password =>
+            {
+                options.Password = password;
+                await mutator.RenameAsync(archivePath, positional[1], positional[2], options).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        Console.WriteLine("Archive entry renamed.");
+        return 0;
+    }
+
+    private static async Task<int> CommentAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("Usage: laplace comment <archive> --show|--set <text>|--file <path>|--clear [options]");
+            return 1;
+        }
+
+        var archivePath = args[0];
+        var passwordOptions = ParsePasswordOptions(args);
+        var options = await ParseMutationOptionsAsync(archivePath, args, passwordOptions).ConfigureAwait(false);
+
+        if (args.Any(x => x.Equals("--show", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (!IsLpcArchive(archivePath))
+            {
+                Console.Error.WriteLine("Showing comments is currently supported for LPC archives only.");
+                return 1;
+            }
+
+            Console.WriteLine(new ArchiveReader().ReadHeaderOnly(archivePath).Comment);
+            return 0;
+        }
+
+        string? comment = null;
+        var clear = false;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (args[i].Equals("--set", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                comment = args[++i];
+            }
+            else if (args[i].Equals("--file", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                comment = await File.ReadAllTextAsync(args[++i]).ConfigureAwait(false);
+            }
+            else if (args[i].Equals("--clear", StringComparison.OrdinalIgnoreCase))
+            {
+                clear = true;
+                comment = string.Empty;
+            }
+        }
+
+        if (comment is null)
+        {
+            Console.Error.WriteLine("Usage: laplace comment <archive> --show|--set <text>|--file <path>|--clear [options]");
+            return 1;
+        }
+
+        if (IsRarArchive(archivePath))
+        {
+            await rarTools.SetCommentAsync(archivePath, comment).ConfigureAwait(false);
+            Console.WriteLine(clear ? "RAR archive comment cleared." : "RAR archive comment updated.");
+            return 0;
+        }
+
+        EnsureLpcArchive(archivePath);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            clear ? "Clear archive comment" : "Set archive comment",
+            passwordOptions,
+            options.Password,
+            async password =>
+            {
+                options.Password = password;
+                if (clear)
+                {
+                    await mutator.ClearCommentAsync(archivePath, options).ConfigureAwait(false);
+                }
+                else
+                {
+                    await mutator.SetCommentAsync(archivePath, comment, options).ConfigureAwait(false);
+                }
+            }).ConfigureAwait(false);
+        Console.WriteLine(clear ? "Archive comment cleared." : "Archive comment updated.");
+        return 0;
+    }
+
+    private static async Task<int> LockAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace lock <archive> [--password <value>|--password-file <path>]");
+            return 1;
+        }
+
+        var archivePath = args[0];
+        if (IsRarArchive(archivePath))
+        {
+            await rarTools.LockAsync(archivePath).ConfigureAwait(false);
+            Console.WriteLine("RAR archive locked.");
+            return 0;
+        }
+
+        EnsureLpcArchive(archivePath);
+        var passwordOptions = ParsePasswordOptions(args);
+        var options = await ParseMutationOptionsAsync(archivePath, args, passwordOptions).ConfigureAwait(false);
+        await RunWithPasswordRetryAsync(
+            archivePath,
+            "Lock archive",
+            passwordOptions,
+            options.Password,
+            async password =>
+            {
+                options.Password = password;
+                await mutator.LockAsync(archivePath, options).ConfigureAwait(false);
+            }).ConfigureAwait(false);
+        Console.WriteLine("Archive locked.");
+        return 0;
+    }
+
+    private static async Task<int> FindAsync(LpcArchiveMutationService mutator, UniversalArchiveService archives, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace find <archive> [--name <glob>] [--text <value>] [--password <value>|--password-file <path>]");
+            return 1;
+        }
+
+        var archivePath = args[0];
+        var name = "*";
+        string? text = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (args[i].Equals("--name", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                name = args[++i];
+            }
+            else if (args[i].Equals("--text", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                text = args[++i];
+            }
+        }
+
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Find archive entries", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        if (!IsLpcArchive(archivePath))
+        {
+            if (!string.IsNullOrEmpty(text))
+            {
+                Console.Error.WriteLine("Text search is currently supported for LPC archives only.");
+                return 1;
+            }
+
+            foreach (var entry in archives.List(archivePath, password).Where(x => MatchesSimpleGlob(x.Path, name)))
+            {
+                Console.WriteLine($"{entry.Id}\t{(entry.IsDirectory ? "DIR" : "FILE")}\t{entry.Path}");
+            }
+
+            return 0;
+        }
+
+        var results = await RunWithPasswordRetryAsync(
+            archivePath,
+            "Find archive entries",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(mutator.Find(archivePath, new ArchiveFindOptions
+            {
+                NamePattern = name,
+                Text = text,
+                Password = resolvedPassword
+            }))).ConfigureAwait(false);
+        foreach (var result in results)
+        {
+            var matched = result.TextMatched ? "name/text" : "name";
+            Console.WriteLine($"{result.Id}\t{(result.IsDirectory ? "DIR" : "FILE")}\t{matched}\t{result.Path}");
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> ViewAsync(LpcArchiveMutationService mutator, string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("Usage: laplace view <archive.lpc> <entry_path_or_id> [--password <value>|--password-file <path>]");
+            return 1;
+        }
+
+        var archivePath = args[0];
+        EnsureLpcArchive(archivePath);
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "View archive entry", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        var bytes = await RunWithPasswordRetryAsync(
+            archivePath,
+            "View archive entry",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(mutator.ViewFile(archivePath, args[1], resolvedPassword))).ConfigureAwait(false);
+        await Console.OpenStandardOutput().WriteAsync(bytes).ConfigureAwait(false);
+        return 0;
+    }
+
+    private static async Task<int> RepairAsync(RarToolCommandService rarTools, string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace repair <archive.rar>");
+            return 1;
+        }
+
+        if (!IsRarArchive(args[0]))
+        {
+            Console.Error.WriteLine("Native LPC repair requires recovery records, which are not implemented yet. RAR repair is delegated to installed RAR tools.");
+            return 1;
+        }
+
+        await rarTools.RepairAsync(args[0]).ConfigureAwait(false);
+        Console.WriteLine("RAR repair command completed.");
+        return 0;
+    }
+
     private static async Task<int> BenchmarkAsync(ArchiveWriter writer, ArchiveExtractor extractor, ArchiveReader reader, string[] args)
     {
         if (args.Length < 1)
@@ -459,9 +785,95 @@ internal static class Program
             {
                 options.SolidMode = ParseSolidMode(args[++i]);
             }
+            else if (current == "--hide-names")
+            {
+                options.EncryptMetadata = true;
+            }
+            else if (current == "--volume-size" && i + 1 < args.Length)
+            {
+                options.VolumeSizeBytes = ParseSize(args[++i]);
+            }
+            else if (current == "--recovery-percent" && i + 1 < args.Length)
+            {
+                options.RecoveryPercent = int.Parse(args[++i]);
+            }
         }
 
         return options;
+    }
+
+    private static async Task<(string ArchivePath, string[] Operands, MutateArchiveOptions Options, ParsedPasswordOptions PasswordOptions)> ParseMutationCommandAsync(
+        string[] args,
+        string usage)
+    {
+        var positional = GetPositionalArgs(args);
+        if (positional.Count < 2)
+        {
+            Console.Error.WriteLine($"Usage: {usage}");
+            throw new ArgumentException("Missing required command arguments.");
+        }
+
+        var archivePath = positional[0];
+        var passwordOptions = ParsePasswordOptions(args);
+        var options = await ParseMutationOptionsAsync(archivePath, args, passwordOptions).ConfigureAwait(false);
+        return (archivePath, positional.Skip(1).ToArray(), options, passwordOptions);
+    }
+
+    private static async Task<MutateArchiveOptions> ParseMutationOptionsAsync(
+        string archivePath,
+        string[] args,
+        ParsedPasswordOptions passwordOptions)
+    {
+        var createOptions = ParseCreateOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(archivePath, "Mutate archive", IsWrite: true),
+            passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+
+        return new MutateArchiveOptions
+        {
+            Mode = createOptions.Mode,
+            BlockSizeBytes = createOptions.BlockSizeBytes,
+            Password = password,
+            VerifyAfterRewrite = createOptions.VerifyAfterCompression
+        };
+    }
+
+    private static List<string> GetPositionalArgs(string[] args)
+    {
+        var positional = new List<string>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i].StartsWith("--", StringComparison.Ordinal))
+            {
+                if (RequiresValue(args[i]) && i + 1 < args.Length)
+                {
+                    i++;
+                }
+
+                continue;
+            }
+
+            positional.Add(args[i]);
+        }
+
+        return positional;
+    }
+
+    private static bool RequiresValue(string option)
+    {
+        return option.Equals("--mode", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--block-size", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--threads", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--solid", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--password", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--password-file", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--set", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--file", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--name", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--text", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--volume-size", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--recovery-percent", StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class ParsedPasswordOptions
@@ -664,6 +1076,16 @@ internal static class Program
         return mb * 1024 * 1024;
     }
 
+    private static long ParseSize(string token)
+    {
+        var normalized = token.Trim().ToUpperInvariant();
+        var multiplier = normalized.EndsWith("G", StringComparison.Ordinal) ? 1024L * 1024L * 1024L :
+            normalized.EndsWith("M", StringComparison.Ordinal) ? 1024L * 1024L :
+            normalized.EndsWith("K", StringComparison.Ordinal) ? 1024L : 1L;
+        var number = multiplier == 1 ? normalized : normalized[..^1];
+        return long.Parse(number) * multiplier;
+    }
+
     private static SolidMode ParseSolidMode(string value)
     {
         return value.ToLowerInvariant() switch
@@ -693,6 +1115,15 @@ internal static class Program
         Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace info <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace test <input_archive> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace add <archive> <input_path...> [--mode fast|balanced|maximum|intensive|auto] [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace freshen <archive> <input_path...> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace delete <archive> <entry_path_or_id...> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace rename <archive.lpc> <entry_path_or_id> <new_entry_path> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace comment <archive> --show|--set <text>|--file <path>|--clear [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace lock <archive> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace find <archive> [--name <glob>] [--text <value>] [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace view <archive.lpc> <entry_path_or_id> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace repair <archive.rar>");
         Console.WriteLine("  laplace benchmark <input_path>");
         Console.WriteLine("  laplace open <archive.lpc>");
         Console.WriteLine("  laplace extract-here <archive> [--password <value>|--password-file <path>]");
@@ -732,6 +1163,12 @@ internal static class Program
         }
 
         Console.WriteLine($"Encrypted: {info.IsEncrypted}");
+        Console.WriteLine($"Locked: {info.IsLocked}");
+        if (!string.IsNullOrEmpty(info.Comment))
+        {
+            Console.WriteLine($"Comment: {info.Comment}");
+        }
+
         Console.WriteLine($"Files: {info.FileCount}");
         Console.WriteLine($"Folders: {info.FolderCount}");
         Console.WriteLine($"Blocks/entries: {info.BlockCount}");
@@ -800,6 +1237,32 @@ internal static class Program
                extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".7z", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".rar", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLpcArchive(string archivePath)
+    {
+        return ArchiveFormatDetector.DetectReadKind(archivePath) == SupportedArchiveKind.Lpc;
+    }
+
+    private static bool IsRarArchive(string archivePath)
+    {
+        return ArchiveFormatDetector.DetectReadKind(archivePath) == SupportedArchiveKind.Rar;
+    }
+
+    private static void EnsureLpcArchive(string archivePath)
+    {
+        if (!IsLpcArchive(archivePath))
+        {
+            throw new NotSupportedException("This mutation command is supported natively only for .lpc archives. RAR support is delegated only where explicitly implemented.");
+        }
+    }
+
+    private static bool MatchesSimpleGlob(string value, string glob)
+    {
+        var regex = "^" + System.Text.RegularExpressions.Regex.Escape(glob)
+            .Replace("\\*", ".*", StringComparison.Ordinal)
+            .Replace("\\?", ".", StringComparison.Ordinal) + "$";
+        return System.Text.RegularExpressions.Regex.IsMatch(value, regex, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     private static int OpenCommand(string[] args)

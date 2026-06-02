@@ -8,7 +8,7 @@ public static class ArchiveValidator
 {
     public static void ValidateHeader(ArchiveHeader header, long archiveLength)
     {
-        if (header.FormatVersion is not (1 or 2))
+        if (header.FormatVersion is not (1 or 2 or 3))
         {
             throw new LaplaceArchiveException($"Unsupported LPC format version: {header.FormatVersion}");
         }

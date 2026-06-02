@@ -9,7 +9,9 @@ namespace Laplace.Desktop;
 
 public sealed class MainForm : Form
 {
-    private readonly UniversalArchiveService _archives = new(new CompressorRegistry());
+    private readonly CompressorRegistry _compressorRegistry = new();
+    private readonly UniversalArchiveService _archives;
+    private readonly LpcArchiveMutationService _mutator;
     private readonly TextBox _archivePathText = new();
     private readonly ListView _entriesView = new();
     private readonly ToolStripStatusLabel _statusLabel = new();
@@ -27,6 +29,8 @@ public sealed class MainForm : Form
 
     public MainForm(string[] args)
     {
+        _archives = new UniversalArchiveService(_compressorRegistry);
+        _mutator = new LpcArchiveMutationService(_compressorRegistry);
         Text = "Laplace";
         ClientSize = new Size(1080, 680);
         MinimumSize = new Size(900, 560);
@@ -132,7 +136,7 @@ public sealed class MainForm : Form
         toolbar.Items.Add(_infoButton);
 
         toolbar.Items.Add(new ToolStripSeparator());
-        toolbar.Items.Add(CreateToolButton("Delete", SystemIcons.Error, (_, _) => ShowValidation("Deleting entries inside an archive is not supported yet.")));
+        toolbar.Items.Add(CreateToolButton("Delete", SystemIcons.Error, async (_, _) => await DeleteSelectedEntriesAsync().ConfigureAwait(true)));
         toolbar.Items.Add(CreateToolButton("Find", SystemIcons.Asterisk, (_, _) => FocusSearch()));
         return toolbar;
     }
@@ -449,6 +453,55 @@ public sealed class MainForm : Form
             "Archive integrity OK.").ConfigureAwait(true);
     }
 
+    private async Task DeleteSelectedEntriesAsync()
+    {
+        if (_currentArchivePath is null)
+        {
+            ShowValidation("Open an archive before deleting entries.");
+            return;
+        }
+
+        if (ArchiveFormatDetector.DetectReadKind(_currentArchivePath) != SupportedArchiveKind.Lpc)
+        {
+            ShowValidation("Deleting entries is currently supported for LPC archives only.");
+            return;
+        }
+
+        var selected = _entriesView.SelectedItems
+            .Cast<ListViewItem>()
+            .Select(item => item.Tag)
+            .OfType<ArchiveEntryListing>()
+            .ToArray();
+        if (selected.Length == 0)
+        {
+            ShowValidation("Select one or more archive entries to delete.");
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            this,
+            $"Delete {selected.Length} selected archive entr{(selected.Length == 1 ? "y" : "ies")}?",
+            "Delete archive entries",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes)
+        {
+            return;
+        }
+
+        var completed = await RunOperationAsync(
+            "Deleting archive entries...",
+            (_, cancellationToken) => _mutator.DeleteAsync(_currentArchivePath, selected.Select(x => x.Id.ToString()), new MutateArchiveOptions
+            {
+                Password = _currentPassword
+            }, cancellationToken),
+            "Archive entries deleted.").ConfigureAwait(true);
+        if (completed)
+        {
+            await LoadArchiveAsync(_currentArchivePath, _currentPassword).ConfigureAwait(true);
+        }
+    }
+
     private void ShowArchiveInfo()
     {
         if (_currentSummary is null || _currentArchivePath is null)
@@ -703,6 +756,8 @@ public sealed class MainForm : Form
             $"Archive: {archivePath}",
             $"Format: {info.Format}{version}",
             $"Encrypted: {(info.IsEncrypted ? "Yes" : "No")}",
+            $"Locked: {(info.IsLocked ? "Yes" : "No")}",
+            string.IsNullOrEmpty(info.Comment) ? string.Empty : $"Comment: {info.Comment}",
             $"Files: {info.FileCount}",
             $"Folders: {info.FolderCount}",
             $"Blocks/entries: {info.BlockCount}",

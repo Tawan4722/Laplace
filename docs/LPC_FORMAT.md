@@ -34,6 +34,13 @@ All offsets and sizes use 64-bit fields where relevant.
 
 LPCv2 encryption protects block payload bytes only. File names, sizes, timestamps, and table metadata remain readable so `list` and `info` can work without decrypting file contents.
 
+Current archive flags:
+
+- bit `1` = encrypted payload blocks
+- bit `2` = locked archive
+
+LPCv3 is currently written when the locked archive flag is used. Metadata encryption, recovery records, multi-volume output, and solid archive layout are reserved for future LPCv3 extensions and are rejected by current writers.
+
 ## File Entry Table
 
 Each file/folder record stores:

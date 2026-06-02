@@ -16,4 +16,8 @@ public sealed class CreateArchiveOptions
     public string Comment { get; set; } = string.Empty;
     public PasswordContext? Password { get; set; }
     public int KeyDerivationIterations { get; set; } = DefaultKeyDerivationIterations;
+    public bool LockArchive { get; set; }
+    public bool EncryptMetadata { get; set; }
+    public long? VolumeSizeBytes { get; set; }
+    public int RecoveryPercent { get; set; }
 }

@@ -133,6 +133,8 @@ public sealed class ShellIntegrationManager
         RegisterCascadeVerb(menuKey, "extract_here", "Extract here", $"{quotedCli} extract-here \"%1\"");
         RegisterCascadeVerb(menuKey, "extract_named", "Extract to archive-named folder", $"{quotedCli} extract-to-named-folder \"%1\"");
         RegisterCascadeVerb(menuKey, "test_archive", "Test integrity", $"{quotedCli} test \"%1\"");
+        RegisterCascadeVerb(menuKey, "find_archive", "Find in archive", $"{quotedCli} find \"%1\"");
+        RegisterCascadeVerb(menuKey, "repair_archive", "Repair archive", $"{quotedCli} repair \"%1\"");
         RegisterCascadeVerb(menuKey, "archive_info", "Show archive details", $"{quotedCli} info \"%1\"");
     }
 

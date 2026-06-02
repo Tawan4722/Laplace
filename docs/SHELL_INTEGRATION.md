@@ -29,6 +29,8 @@ laplace integrate install --cli-path "C:\Program Files\Laplace\laplace.exe"
   - Extract here
   - Extract to archive-named folder
   - Test integrity
+  - Find in archive
+  - Repair archive
   - Show archive details
 - Archive menus are registered for `.lpc`, `.zip`, `.7z`, `.rar`, `.tar`, `.gz`, `.tgz`, `.bz2`, `.xz`, `.zst`, and `.lzip` without taking over the default app for non-`.lpc` formats.
 - A branded `Laplace` cascade menu for normal files, folders, and folder background:
