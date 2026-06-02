@@ -212,12 +212,32 @@ public sealed class ArchiveRoundTripTests
 
         var candidates = engine.GetCandidates(CompressionMode.Intensive, analysis);
 
-        Assert.Equal(CompressionMethod.LzmaMax, candidates[0]);
+        Assert.Equal(CompressionMethod.Zpaq, candidates[0]);
+        Assert.Equal(CompressionMethod.Bsc, candidates[1]);
+        Assert.Contains(CompressionMethod.Blosc2, candidates);
+        Assert.Contains(CompressionMethod.LzmaMax, candidates);
         Assert.Contains(CompressionMethod.ZstdHigh, candidates);
         Assert.Contains(CompressionMethod.Raw, candidates);
         Assert.True(
-            engine.Score(CompressionMode.Intensive, CompressionMethod.LzmaMax, analysis, 0.40, 0.25, 0.72) >
-            engine.Score(CompressionMode.Fast, CompressionMethod.LzmaMax, analysis, 0.40, 0.25, 0.72));
+            engine.Score(CompressionMode.Intensive, CompressionMethod.Zpaq, analysis, 0.20, 0.05, 0.85) >
+            engine.Score(CompressionMode.Fast, CompressionMethod.Zpaq, analysis, 0.20, 0.05, 0.85));
+    }
+
+    [Fact]
+    public void Blosc2Compressor_RoundTripsStructuredBinaryData()
+    {
+        var data = new byte[256 * 1024];
+        for (var i = 0; i < data.Length; i += 8)
+        {
+            BitConverter.GetBytes(i / 8).CopyTo(data, i);
+        }
+
+        var compressor = new CompressorRegistry().GetCompressor(CompressionMethod.Blosc2);
+        var compressed = compressor.Compress(data);
+        var decompressed = compressor.Decompress(compressed, data.Length);
+
+        Assert.True(compressed.Length < data.Length);
+        Assert.Equal(data, decompressed);
     }
 
     [Fact]

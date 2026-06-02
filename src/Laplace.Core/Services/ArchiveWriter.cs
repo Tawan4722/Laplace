@@ -328,6 +328,9 @@ public sealed class ArchiveWriter
             CompressionMethod.ZstdHigh => 0.42,
             CompressionMethod.LzmaMax => 0.25,
             CompressionMethod.DeflateFallback => 0.55,
+            CompressionMethod.Blosc2 => 0.88,
+            CompressionMethod.Zpaq => 0.05,
+            CompressionMethod.Bsc => 0.35,
             _ => 0.50
         };
     }
@@ -343,6 +346,9 @@ public sealed class ArchiveWriter
             CompressionMethod.ZstdHigh => 0.60,
             CompressionMethod.LzmaMax => 0.72,
             CompressionMethod.DeflateFallback => 0.33,
+            CompressionMethod.Blosc2 => 0.30,
+            CompressionMethod.Zpaq => 0.85,
+            CompressionMethod.Bsc => 0.78,
             _ => 0.40
         };
     }

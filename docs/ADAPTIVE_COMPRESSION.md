@@ -13,10 +13,10 @@ The adaptive selector uses:
 
 1. Files likely already compressed (media/archive/installer extensions or very high entropy) default to `RAW`.
 2. Otherwise, mode selects preferred Zstd profile:
-   - `fast` -> prioritize `LZ4_FAST` / `ZSTD_FAST`
-   - `balanced` -> prioritize `ZSTD_BALANCED`
-   - `maximum` -> prioritize `ZSTD_HIGH`
-   - `intensive` -> try the strongest available candidates even for data that looks pre-compressed
+   - `fast` -> prioritize `BLOSC2` / `LZ4_FAST` / `ZSTD_FAST`
+   - `balanced` -> prioritize `ZSTD_BALANCED` and `BLOSC2`
+   - `maximum` -> prioritize `BSC` when configured, then `LZMA_MAX` / `ZSTD_HIGH`
+   - `intensive` -> try the strongest available candidates, including configured `ZPAQ` / `BSC`, even for data that looks pre-compressed
    - `auto` -> entropy/repetition/file-type-based candidate set
 3. Every block is checked after compression:
    - if `compressed_size >= original_size`, store block as `RAW`.
@@ -49,28 +49,28 @@ Weights are implemented and can be tuned in code.
 
 ## Advanced Codec Candidates
 
-These algorithms are not currently implemented in Laplace. They are useful reference points for future compression modes because each optimizes a different extreme of the speed/ratio/hardware tradeoff.
+Laplace now exposes method IDs for these advanced backends. Blosc2 is built in through a native package. ZPAQ and BSC are optional external-command backends because there is no managed in-tree implementation in the project; they are registered only when both command templates are configured in the environment.
 
-### Blosc
+### Blosc: Effective via Cache Optimization
 
-Blosc is an in-memory meta-compressor aimed at binary arrays and scientific data. Its main advantage is throughput: for some array-shaped workloads, reading compressed bytes from memory and decompressing them can be faster than moving the larger uncompressed byte stream through memory.
+Traditional archival codecs focus mostly on mathematical size reduction. Blosc is more hardware-oriented: it is designed around moving less data through the memory hierarchy and keeping work inside CPU caches.
 
-The design splits data into small cache-friendly blocks and combines lightweight codecs with byte/bit shuffling, multithreading, and SIMD-friendly processing. This makes it strongest for numeric arrays and structured binary data where memory bandwidth is the bottleneck, not for general-purpose archival ratios.
+Blosc splits input into small cache-friendly chunks and can apply shuffle filters before compression. The shuffle step rearranges bytes of the same position/type next to each other, which is especially effective for numeric arrays and structured binary records. Combined with lightweight codecs, SIMD-friendly loops, and multithreading, this can make decompression faster than copying the equivalent uncompressed data through memory.
 
-Potential Laplace fit: a future `fast`/`auto` candidate for large numeric or database-like binary blocks when decode speed matters more than maximum compression ratio.
+Laplace fit: `BLOSC2` is a built-in `fast`, `balanced`, and `auto` candidate for large binary arrays, scientific datasets, telemetry streams, and database-like blocks where memory bandwidth and decode speed matter more than maximum archival ratio.
 
-### ZPAQ
+### ZPAQ: Effective via Context Mixing
 
-ZPAQ targets maximum compression ratio through context mixing and probabilistic modeling. Instead of relying mostly on dictionary matches, it models byte/bit context and predicts upcoming data from prior context, which can beat conventional archival codecs on some inputs.
+Standard dictionary compressors such as ZIP-style Deflate, LZ4, Zstd, and many 7z workflows primarily search for repeated byte sequences within a window or dictionary. ZPAQ comes from the PAQ family and uses context mixing: multiple prediction models estimate the probability of the next bit, then their weights are adjusted based on which models have been accurate so far.
 
-The tradeoff is cost. ZPAQ-style compression is extremely CPU-intensive and slow compared with LZ4, Zstd, Deflate, or normal LZMA workflows. It is best suited to deep cold storage where compressed size matters more than compression time.
+That lets ZPAQ capture statistical structure that is not limited to recent exact string repeats. The tradeoff is cost: this style of modeling can be extremely CPU-intensive and much slower than LZ4, Zstd, Deflate, or normal LZMA workflows.
 
-Potential Laplace fit: a future `intensive` or dedicated archival mode, likely opt-in only and clearly labeled as slow.
+Laplace fit: `ZPAQ` is an optional `intensive` candidate for cases where compressed size matters more than compression time. It is enabled by setting both `LAPLACE_ZPAQ_COMPRESS_COMMAND` and `LAPLACE_ZPAQ_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`.
 
-### BSC
+### BSC: Effective via Massive Parallelism
 
-BSC is a block-sorting compressor based around Burrows-Wheeler-style transforms, similar in spirit to bzip2 but optimized for larger blocks and parallel execution. Some builds can use NVIDIA CUDA to offload suitable work to the GPU.
+BSC is a block-sorting compressor built around Burrows-Wheeler-style transforms. Instead of depending entirely on a sequential sliding dictionary, it transforms blocks into forms that expose repeated contexts and can be processed with more parallelism.
 
-Its appeal is high compression ratio with better throughput on large datasets when GPU acceleration is available. Its drawback is portability and deployment complexity: CUDA support depends on hardware, drivers, and native binaries.
+Some BSC builds can use GPU acceleration, which makes it interesting for large datasets where high-ratio compression would otherwise take too long on CPU alone. The practical drawback is deployment complexity: GPU acceleration depends on hardware, drivers, native binaries, and a CPU fallback path.
 
-Potential Laplace fit: an optional hardware-accelerated backend for large local datasets, not a default method unless CPU fallback and archive compatibility are well-defined.
+Laplace fit: `BSC` is an optional `maximum`/`intensive` candidate for large local datasets. It is enabled by setting both `LAPLACE_BSC_COMPRESS_COMMAND` and `LAPLACE_BSC_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`.

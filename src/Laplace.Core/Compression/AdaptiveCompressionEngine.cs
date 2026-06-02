@@ -46,10 +46,10 @@ public sealed class AdaptiveCompressionEngine
 
         return mode switch
         {
-            CompressionMode.Fast => [CompressionMethod.Lz4Fast, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Raw],
-            CompressionMode.Balanced => [CompressionMethod.ZstdBalanced, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
-            CompressionMode.Maximum => [CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Raw],
-            CompressionMode.Intensive => [CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
+            CompressionMode.Fast => [CompressionMethod.Blosc2, CompressionMethod.Lz4Fast, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Raw],
+            CompressionMode.Balanced => [CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
+            CompressionMode.Maximum => [CompressionMethod.Bsc, CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Raw],
+            CompressionMode.Intensive => [CompressionMethod.Zpaq, CompressionMethod.Bsc, CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
             CompressionMode.Auto => GetAutoCandidates(analysis),
             _ => [CompressionMethod.ZstdBalanced, CompressionMethod.Raw]
         };
@@ -204,15 +204,15 @@ public sealed class AdaptiveCompressionEngine
 
         if (analysis.CompressibilityEstimate > 0.72)
         {
-            return [CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Raw];
+            return [CompressionMethod.Bsc, CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Raw];
         }
 
         if (analysis.CompressibilityEstimate > 0.45)
         {
-            return [CompressionMethod.ZstdBalanced, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Lz4Fast, CompressionMethod.Raw];
+            return [CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Lz4Fast, CompressionMethod.Raw];
         }
 
-        return [CompressionMethod.ZstdFast, CompressionMethod.Lz4Fast, CompressionMethod.Raw];
+        return [CompressionMethod.Blosc2, CompressionMethod.ZstdFast, CompressionMethod.Lz4Fast, CompressionMethod.Raw];
     }
 
     private static double GetFileTypeAffinity(CompressionMethod method, FileTypeCategory category)
@@ -220,6 +220,9 @@ public sealed class AdaptiveCompressionEngine
         return (method, category) switch
         {
             (CompressionMethod.Raw, FileTypeCategory.Image or FileTypeCategory.Video or FileTypeCategory.Audio or FileTypeCategory.Archive or FileTypeCategory.Executable) => 0.95,
+            (CompressionMethod.Blosc2, FileTypeCategory.Binary or FileTypeCategory.Database) => 0.92,
+            (CompressionMethod.Zpaq, FileTypeCategory.Database or FileTypeCategory.TextLike or FileTypeCategory.SourceCode or FileTypeCategory.Log or FileTypeCategory.Archive) => 0.93,
+            (CompressionMethod.Bsc, FileTypeCategory.Binary or FileTypeCategory.Database or FileTypeCategory.TextLike or FileTypeCategory.SourceCode) => 0.90,
             (CompressionMethod.Lz4Fast, FileTypeCategory.Binary or FileTypeCategory.Executable) => 0.85,
             (CompressionMethod.DeflateFallback, FileTypeCategory.TextLike or FileTypeCategory.SourceCode or FileTypeCategory.Log) => 0.75,
             (CompressionMethod.ZstdFast, FileTypeCategory.Binary or FileTypeCategory.Unknown) => 0.8,

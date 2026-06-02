@@ -82,6 +82,9 @@ Each block record stores:
 - `4 = ZSTD_HIGH`
 - `5 = LZMA_MAX`
 - `6 = DEFLATE_FALLBACK`
+- `7 = BLOSC2`
+- `8 = ZPAQ`
+- `9 = BSC`
 
 ## Integrity
 

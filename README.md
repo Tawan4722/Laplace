@@ -73,7 +73,10 @@ Available methods:
 - `ZSTD_BALANCED`
 - `ZSTD_HIGH`
 - `DEFLATE_FALLBACK`
-- `LZMA_MAX` method ID reserved
+- `LZMA_MAX`
+- `BLOSC2`
+- `ZPAQ` external-command backend
+- `BSC` external-command backend
 
 Modes:
 
@@ -85,7 +88,16 @@ Modes:
 
 Blocks that do not get smaller after compression are stored as `RAW`, so incompressible data is not blindly expanded.
 
-See [docs/ADAPTIVE_COMPRESSION.md](docs/ADAPTIVE_COMPRESSION.md), which also tracks future codec candidates such as Blosc, ZPAQ, and BSC.
+Blosc2 is built in for cache-friendly binary blocks. ZPAQ and BSC are optional external-command backends for `intensive`/`maximum` candidate testing; they are used only when both command templates are configured:
+
+- `LAPLACE_ZPAQ_COMPRESS_COMMAND`
+- `LAPLACE_ZPAQ_DECOMPRESS_COMMAND`
+- `LAPLACE_BSC_COMPRESS_COMMAND`
+- `LAPLACE_BSC_DECOMPRESS_COMMAND`
+
+Each command template must read `{input}` and write `{output}`.
+
+See [docs/ADAPTIVE_COMPRESSION.md](docs/ADAPTIVE_COMPRESSION.md) for adaptive selection details and advanced backend notes.
 
 ## Passwords And Encryption
 

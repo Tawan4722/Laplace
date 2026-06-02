@@ -8,5 +8,8 @@ public enum CompressionMethod : byte
     ZstdBalanced = 3,
     ZstdHigh = 4,
     LzmaMax = 5,
-    DeflateFallback = 6
+    DeflateFallback = 6,
+    Blosc2 = 7,
+    Zpaq = 8,
+    Bsc = 9
 }

@@ -18,8 +18,12 @@ public sealed class CompressorRegistry : ICompressorRegistry
             [CompressionMethod.ZstdBalanced] = new ZstdCompressor(CompressionMethod.ZstdBalanced, 6),
             [CompressionMethod.ZstdHigh] = new ZstdCompressor(CompressionMethod.ZstdHigh, 15),
             [CompressionMethod.LzmaMax] = new ZstdCompressor(CompressionMethod.LzmaMax, 19),
-            [CompressionMethod.DeflateFallback] = new DeflateCompressor()
+            [CompressionMethod.DeflateFallback] = new DeflateCompressor(),
+            [CompressionMethod.Blosc2] = new Blosc2Compressor()
         };
+
+        TryRegisterExternal(CompressionMethod.Zpaq, "LAPLACE_ZPAQ_COMPRESS_COMMAND", "LAPLACE_ZPAQ_DECOMPRESS_COMMAND");
+        TryRegisterExternal(CompressionMethod.Bsc, "LAPLACE_BSC_COMPRESS_COMMAND", "LAPLACE_BSC_DECOMPRESS_COMMAND");
     }
 
     public IBlockCompressor GetCompressor(CompressionMethod method)
@@ -30,5 +34,14 @@ public sealed class CompressorRegistry : ICompressorRegistry
         }
 
         throw new NotSupportedException($"Compression method {method} is not available in this build.");
+    }
+
+    private void TryRegisterExternal(CompressionMethod method, string compressEnvironmentVariable, string decompressEnvironmentVariable)
+    {
+        var compressor = ExternalCommandCompressor.TryCreate(method, compressEnvironmentVariable, decompressEnvironmentVariable);
+        if (compressor is not null)
+        {
+            _compressors[method] = compressor;
+        }
     }
 }
