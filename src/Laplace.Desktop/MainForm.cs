@@ -807,7 +807,7 @@ public sealed class MainForm : Form
     private static bool IsArchivePath(string path)
     {
         var extension = Path.GetExtension(path).ToLowerInvariant();
-        return extension is ".lpc" or ".zip" or ".7z" or ".rar" or ".iso" or ".tar" or ".gz" or ".tgz" or ".bz2" or ".xz" or ".zst" or ".lzip";
+        return extension is ".lpc" or ".zip" or ".7z" or ".rar" or ".cab" or ".iso" or ".tar" or ".gz" or ".tgz" or ".bz2" or ".xz" or ".zst" or ".lzip";
     }
 
     private static string FormatSummary(string archivePath, ArchiveSummary info)

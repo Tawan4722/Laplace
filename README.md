@@ -16,7 +16,7 @@ Compared with RAR, Laplace has stronger project transparency and a native adapti
 
 - Creates native `.lpc` archives.
 - Creates `.zip`, `.7z`, and `.rar` archives.
-- Extracts, lists, inspects, and tests common archive formats.
+- Extracts, lists, inspects, and tests common archive formats, including CAB packages.
 - Adds, freshens, deletes, renames, comments, locks, finds, and views native LPC archive entries.
 - Delegates a safe subset of RAR mutations to installed WinRAR/RAR tools.
 - Supports encrypted `.lpc` archives with AES-256-GCM payload encryption.
@@ -42,6 +42,7 @@ Read, list, info, test, and extract:
 - `.zip`
 - `.7z`
 - `.rar`
+- `.cab`
 - `.iso`
 - `.tar`
 - `.tar.gz`, `.tgz`
@@ -53,7 +54,7 @@ Read, list, info, test, and extract:
 - `.zst`
 - `.lzip`
 
-Unsupported formats fail with a clear error. For some non-password external archives on Windows, Laplace can fall back to the inbox `tar.exe`/libarchive path when the managed reader cannot extract them.
+Unsupported formats fail with a clear error. For some non-password external archives on Windows, Laplace can fall back to the inbox `tar.exe`/libarchive path when the managed reader cannot extract them. CAB archives are recognized in the UI and shell integration and are handled through the external archive path when the runtime supports them.
 
 ## Native LPC Format
 

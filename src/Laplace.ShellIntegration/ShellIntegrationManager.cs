@@ -17,6 +17,7 @@ public sealed class ShellIntegrationManager
         ".zip",
         ".7z",
         ".rar",
+        ".cab",
         ".iso",
         ".tar",
         ".gz",

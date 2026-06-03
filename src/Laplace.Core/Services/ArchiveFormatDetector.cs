@@ -42,6 +42,7 @@ public static class ArchiveFormatDetector
             ".zip" => SupportedArchiveKind.Zip,
             ".7z" => SupportedArchiveKind.SevenZip,
             ".rar" => SupportedArchiveKind.Rar,
+            ".cab" => SupportedArchiveKind.External,
             _ => SupportedArchiveKind.External
         };
     }
@@ -72,7 +73,7 @@ public static class ArchiveFormatDetector
         throw new NotSupportedException($"Unsupported output archive format '{extension}'. Supported write formats: {SupportedWriteFormats}");
     }
 
-    public static string SupportedReadFormats => ".lpc, .zip, .7z, .rar, .iso, .tar, .tar.gz/.tgz, .tar.bz2/.tbz2, .tar.xz/.txz, .gz, .bz2, .xz, .zst, .lzip";
+    public static string SupportedReadFormats => ".lpc, .zip, .7z, .rar, .cab, .iso, .tar, .tar.gz/.tgz, .tar.bz2/.tbz2, .tar.xz/.txz, .gz, .bz2, .xz, .zst, .lzip";
     public static string SupportedWriteFormats => ".lpc, .zip, .7z, .rar";
 
     private static bool LooksLikeLpc(string archivePath)

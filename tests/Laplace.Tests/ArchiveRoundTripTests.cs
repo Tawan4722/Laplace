@@ -690,9 +690,11 @@ public sealed class ArchiveRoundTripTests
         File.WriteAllBytes(sevenZipPath, [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0x00, 0x04]);
         var rarPath = Path.Combine(root, "misnamed.zip");
         File.WriteAllBytes(rarPath, [0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]);
+        var cabPath = Path.Combine(root, "sample.cab");
 
         Assert.Equal(SupportedArchiveKind.SevenZip, ArchiveFormatDetector.DetectReadKind(sevenZipPath));
         Assert.Equal(SupportedArchiveKind.Rar, ArchiveFormatDetector.DetectReadKind(rarPath));
+        Assert.Equal(SupportedArchiveKind.External, ArchiveFormatDetector.DetectReadKind(cabPath));
     }
 
     [WindowsOnlyFact]
