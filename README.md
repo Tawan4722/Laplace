@@ -42,6 +42,7 @@ Read, list, info, test, and extract:
 - `.zip`
 - `.7z`
 - `.rar`
+- `.iso`
 - `.tar`
 - `.tar.gz`, `.tgz`
 - `.tar.bz2`, `.tbz2`
@@ -94,6 +95,7 @@ Modes:
 - `balanced`: default tradeoff
 - `maximum`: size-focused
 - `intensive`: strongest candidate set and ratio-focused scoring
+- `compressed`: strongest ratio-first profile; for `.7z`, uses installed 7-Zip with solid LZMA2 when available; for `.rar`, uses installed WinRAR/RAR with RAR5, solid mode, and best compression
 - `auto`: content-based candidate set
 
 Methods:
@@ -165,7 +167,7 @@ laplace <command>
 
 ```powershell
 laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] `
-  --mode fast|balanced|maximum|intensive|auto `
+  --mode fast|balanced|maximum|intensive|compressed|auto `
   --block-size 4M|8M|16M|32M|64M `
   --solid on|off|auto `
   --threads <number> `
@@ -178,8 +180,8 @@ Examples:
 laplace compress .\folder .\archive.lpc --mode balanced --verify
 laplace compress .\folder .\dataset.lpc --mode intensive
 laplace compress .\folder .\archive.zip --mode maximum
-laplace compress .\folder .\archive.7z --mode maximum
-laplace compress .\folder .\archive.rar --mode maximum
+laplace compress .\folder .\archive.7z --mode compressed --solid on
+laplace compress .\folder .\archive.rar --mode compressed --solid on
 laplace compress .\folder .\secure.lpc --encrypt
 laplace compress .\folder .\secure.zip --password "secret"
 laplace compress .\folder .\secure.lpc --password-file .\password.txt
@@ -196,7 +198,7 @@ laplace compress-beside .\report.pdf --mode balanced
 
 ```powershell
 laplace estimate <input_path...> `
-  --mode fast|balanced|maximum|intensive|auto `
+  --mode fast|balanced|maximum|intensive|compressed|auto `
   --block-size 4M|8M|16M|32M|64M
 ```
 
@@ -205,7 +207,8 @@ The estimate command samples files, trial-compresses representative chunks, and 
 ### Extract
 
 ```powershell
-laplace extract .\archive.lpc .\out --overwrite
+laplace extract .\archive.lpc .\out --overwrite --no-verify --quiet
+laplace extract .\image.iso .\usb-root --overwrite --no-verify
 laplace extract .\secure.zip .\out --password "secret"
 laplace extract .\secure.lpc .\out --password-file .\password.txt
 ```
@@ -266,6 +269,7 @@ The desktop app supports:
 - estimate compression
 - open/list archive contents
 - extract archive
+- extract ISO contents to a removable drive
 - extract selected entries
 - delete selected entries from LPC archives
 - test archive integrity
@@ -290,6 +294,7 @@ It registers:
 - `.lpc` file association
 - archive actions: open, extract with options, extract here, extract to named folder, test integrity, show details
 - archive actions also include find and repair verbs
+- `.iso` actions include extracting ISO contents to a selected removable drive without formatting or raw-writing the drive
 - create actions for files, folders, and folder background
 
 See [docs/SHELL_INTEGRATION.md](docs/SHELL_INTEGRATION.md).

@@ -1,6 +1,7 @@
 using Laplace.Core.Enums;
 using Laplace.Core.Models;
 using System.Diagnostics;
+using System.Runtime.Versioning;
 
 namespace Laplace.Core.Services;
 
@@ -113,20 +114,13 @@ public sealed class RarArchiveWriter
             RedirectStandardOutput = true,
             CreateNoWindow = true
         };
-        startInfo.ArgumentList.Add("a");
-        startInfo.ArgumentList.Add("-r");
-        startInfo.ArgumentList.Add("-o+");
-        startInfo.ArgumentList.Add("-idq");
-        startInfo.ArgumentList.Add($"-m{MapCompressionLevel(options.Mode)}");
-        if (options.Password is not null)
+        var entries = Directory.EnumerateFileSystemEntries(stagingRoot)
+            .Select(Path.GetFileName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!);
+        foreach (var argument in BuildRarArguments(outputArchivePath, options, entries))
         {
-            startInfo.ArgumentList.Add($"-hp{options.Password.Password}");
-        }
-
-        startInfo.ArgumentList.Add(outputArchivePath);
-        foreach (var entry in Directory.EnumerateFileSystemEntries(stagingRoot).Select(Path.GetFileName).Where(x => !string.IsNullOrWhiteSpace(x)))
-        {
-            startInfo.ArgumentList.Add(entry!);
+            startInfo.ArgumentList.Add(argument);
         }
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start RAR creation process.");
@@ -147,9 +141,48 @@ public sealed class RarArchiveWriter
         return mode switch
         {
             CompressionMode.Fast => 1,
-            CompressionMode.Maximum or CompressionMode.Intensive => 5,
+            CompressionMode.Maximum or CompressionMode.Intensive or CompressionMode.Compressed => 5,
             _ => 3
         };
+    }
+
+    internal static IReadOnlyList<string> BuildRarArguments(
+        string outputArchivePath,
+        CreateArchiveOptions options,
+        IEnumerable<string> entries)
+    {
+        var arguments = new List<string>
+        {
+            "a",
+            "-r",
+            "-o+",
+            "-idq",
+            "-ma5",
+            $"-m{MapCompressionLevel(options.Mode)}",
+            $"-mt{Math.Clamp(options.Threads, 1, 32)}"
+        };
+
+        var useSolid = options.SolidMode switch
+        {
+            SolidMode.On => true,
+            SolidMode.Off => false,
+            _ => options.Mode == CompressionMode.Compressed
+        };
+        arguments.Add(useSolid ? "-s" : "-s-");
+
+        if (options.Mode == CompressionMode.Compressed)
+        {
+            arguments.Add("-md256m");
+        }
+
+        if (options.Password is not null)
+        {
+            arguments.Add($"-hp{options.Password.Password}");
+        }
+
+        arguments.Add(outputArchivePath);
+        arguments.AddRange(entries);
+        return arguments;
     }
 
     private static string? FindRarExecutable()
@@ -165,6 +198,18 @@ public sealed class RarArchiveWriter
 
         if (OperatingSystem.IsWindows())
         {
+            foreach (var root in FindWindowsInstallLocations())
+            {
+                foreach (var executableName in ExecutableNames)
+                {
+                    var candidate = Path.Combine(root, executableName);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
             var programFiles = new[]
             {
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
@@ -184,6 +229,41 @@ public sealed class RarArchiveWriter
         }
 
         return null;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static IEnumerable<string> FindWindowsInstallLocations()
+    {
+        foreach (var registryRoot in new[]
+        {
+            Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall")
+        })
+        {
+            using (registryRoot)
+            {
+                if (registryRoot is null)
+                {
+                    continue;
+                }
+
+                foreach (var subkeyName in registryRoot.GetSubKeyNames())
+                {
+                    using var subkey = registryRoot.OpenSubKey(subkeyName);
+                    var displayName = subkey?.GetValue("DisplayName")?.ToString();
+                    if (displayName is null || !displayName.Contains("WinRAR", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var installLocation = subkey?.GetValue("InstallLocation")?.ToString();
+                    if (!string.IsNullOrWhiteSpace(installLocation))
+                    {
+                        yield return installLocation;
+                    }
+                }
+            }
+        }
     }
 
     private static string? FindOnPath(string executableName)

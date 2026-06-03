@@ -14,6 +14,7 @@ public sealed class CliBlackBoxTests
         Assert.Contains("Laplace CLI", result.StandardOutput);
         Assert.Contains("laplace compress", result.StandardOutput);
         Assert.Contains("intensive", result.StandardOutput);
+        Assert.Contains("compressed", result.StandardOutput);
     }
 
     [Fact]
@@ -60,6 +61,31 @@ public sealed class CliBlackBoxTests
             Assert.Equal(
                 await File.ReadAllTextAsync(sourceFile),
                 await File.ReadAllTextAsync(Path.Combine(extractPath, "hello.txt")));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task Extract_NoVerify_RoundTripsThroughCli()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "fast.txt");
+            await File.WriteAllTextAsync(sourceFile, string.Join(Environment.NewLine, Enumerable.Repeat("fast extraction path", 200)));
+            var archivePath = Path.Combine(root, "fast.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceFile, archivePath, "--mode", "fast", "--no-verify"));
+            var extract = await RunLaplaceAsync("extract", archivePath, extractPath, "--overwrite", "--no-verify");
+
+            AssertSuccess(extract);
+            Assert.Equal(
+                await File.ReadAllTextAsync(sourceFile),
+                await File.ReadAllTextAsync(Path.Combine(extractPath, "fast.txt")));
         }
         finally
         {

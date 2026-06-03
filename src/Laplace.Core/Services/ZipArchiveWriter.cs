@@ -31,7 +31,7 @@ public sealed class ZipArchiveWriter
         {
             UseZip64 = UseZip64.Dynamic
         };
-        zip.SetLevel(options.Mode == Enums.CompressionMode.Fast ? 1 : options.Mode is Enums.CompressionMode.Maximum or Enums.CompressionMode.Intensive ? 9 : 6);
+        zip.SetLevel(options.Mode == Enums.CompressionMode.Fast ? 1 : options.Mode is Enums.CompressionMode.Maximum or Enums.CompressionMode.Intensive or Enums.CompressionMode.Compressed ? 9 : 6);
         if (options.Password is not null)
         {
             zip.Password = options.Password.Password;

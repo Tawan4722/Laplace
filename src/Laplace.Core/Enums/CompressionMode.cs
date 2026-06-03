@@ -6,5 +6,6 @@ public enum CompressionMode
     Balanced,
     Maximum,
     Intensive,
+    Compressed,
     Auto
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.Versioning;
 
 namespace Laplace.Core.Services;
 
@@ -91,6 +92,18 @@ public sealed class RarToolCommandService
 
         if (OperatingSystem.IsWindows())
         {
+            foreach (var root in FindWindowsInstallLocations())
+            {
+                foreach (var executableName in ExecutableNames)
+                {
+                    var candidate = Path.Combine(root, executableName);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
             var programFiles = new[]
             {
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
@@ -110,6 +123,41 @@ public sealed class RarToolCommandService
         }
 
         return null;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static IEnumerable<string> FindWindowsInstallLocations()
+    {
+        foreach (var registryRoot in new[]
+        {
+            Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall")
+        })
+        {
+            using (registryRoot)
+            {
+                if (registryRoot is null)
+                {
+                    continue;
+                }
+
+                foreach (var subkeyName in registryRoot.GetSubKeyNames())
+                {
+                    using var subkey = registryRoot.OpenSubKey(subkeyName);
+                    var displayName = subkey?.GetValue("DisplayName")?.ToString();
+                    if (displayName is null || !displayName.Contains("WinRAR", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var installLocation = subkey?.GetValue("InstallLocation")?.ToString();
+                    if (!string.IsNullOrWhiteSpace(installLocation))
+                    {
+                        yield return installLocation;
+                    }
+                }
+            }
+        }
     }
 
     private static string? FindOnPath(string executableName)

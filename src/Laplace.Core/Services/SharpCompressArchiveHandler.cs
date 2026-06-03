@@ -24,7 +24,7 @@ public sealed class SharpCompressArchiveHandler
                     IsDirectory = entry.IsDirectory,
                     OriginalSize = Math.Max(0, entry.Size),
                     CompressedSize = Math.Max(0, entry.CompressedSize),
-                    Method = entry.CompressionType.ToString(),
+                    Method = GetCompressionMethodName(entry),
                     Path = NormalizeEntryName(entry.Key, archivePath),
                     IsEncrypted = entry.IsEncrypted
                 });
@@ -66,6 +66,18 @@ public sealed class SharpCompressArchiveHandler
             IsEncrypted = entries.Any(x => x.IsEncrypted),
             Notes = "External archive metadata is normalized; test validates readability and exposed checksums only."
         };
+    }
+
+    private static string GetCompressionMethodName(IArchiveEntry entry)
+    {
+        try
+        {
+            return entry.CompressionType.ToString();
+        }
+        catch
+        {
+            return "Unknown";
+        }
     }
 
     public async Task ExtractAsync(

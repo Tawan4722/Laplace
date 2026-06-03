@@ -76,6 +76,7 @@ public sealed class MainForm : Form
         commands.DropDownItems.Add("&Archive information", null, (_, _) => ShowArchiveInfo());
 
         var tools = new ToolStripMenuItem("&Tools");
+        tools.DropDownItems.Add("&Extract ISO to removable drive...", null, async (_, _) => await ChooseAndExtractIsoToDriveAsync().ConfigureAwait(true));
         tools.DropDownItems.Add("&Clear password", null, (_, _) =>
         {
             _currentPassword = null;
@@ -432,6 +433,63 @@ public sealed class MainForm : Form
         }
     }
 
+    private async Task ChooseAndExtractIsoToDriveAsync()
+    {
+        using var open = new OpenFileDialog
+        {
+            Title = "Choose ISO image",
+            Filter = "ISO images (*.iso)|*.iso|All files (*.*)|*.*"
+        };
+        if (open.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        await ShowIsoToDriveDialogAsync(open.FileName).ConfigureAwait(true);
+    }
+
+    private async Task ShowIsoToDriveDialogAsync(string isoPath)
+    {
+        if (!File.Exists(isoPath))
+        {
+            ShowValidation($"ISO image not found: {isoPath}");
+            return;
+        }
+
+        using var dialog = new IsoToDriveDialog(isoPath);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var driveRoot = dialog.SelectedDriveRoot;
+        if (string.IsNullOrWhiteSpace(driveRoot))
+        {
+            ShowValidation("Choose a removable drive.");
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            this,
+            $"Extract ISO contents to {driveRoot}?\n\nExisting files are {(dialog.Overwrite ? "overwritten when names match" : "left untouched; extraction stops on name conflicts")}. This does not format or raw-write the drive.",
+            "Extract ISO to removable drive",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        if (confirm != DialogResult.Yes)
+        {
+            return;
+        }
+
+        await RunOperationAsync(
+            "Extracting ISO to removable drive...",
+            (progress, cancellationToken) => _archives.ExtractAsync(isoPath, driveRoot, new ExtractArchiveOptions
+            {
+                Overwrite = dialog.Overwrite,
+                VerifyChecksums = false
+            }, progress, cancellationToken),
+            $"Extracted ISO contents to {driveRoot}.").ConfigureAwait(true);
+    }
+
     private async Task TestCurrentArchiveAsync()
     {
         if (_currentArchivePath is null)
@@ -710,6 +768,12 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (string.Equals(first, "--iso-to-drive", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            await ShowIsoToDriveDialogAsync(args[1]).ConfigureAwait(true);
+            return;
+        }
+
         if (string.Equals(first, "--estimate", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
         {
             await ShowEstimateAsync(args.Skip(1)).ConfigureAwait(true);
@@ -743,7 +807,7 @@ public sealed class MainForm : Form
     private static bool IsArchivePath(string path)
     {
         var extension = Path.GetExtension(path).ToLowerInvariant();
-        return extension is ".lpc" or ".zip" or ".7z" or ".rar" or ".tar" or ".gz" or ".tgz" or ".bz2" or ".xz" or ".zst" or ".lzip";
+        return extension is ".lpc" or ".zip" or ".7z" or ".rar" or ".iso" or ".tar" or ".gz" or ".tgz" or ".bz2" or ".xz" or ".zst" or ".lzip";
     }
 
     private static string FormatSummary(string archivePath, ArchiveSummary info)
@@ -883,7 +947,7 @@ internal sealed class CreateArchiveDialog : Form
             options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         }
 
-        ConfigureCombo(_mode, ["Balanced", "Fast", "Maximum", "Intensive", "Auto"], 0);
+        ConfigureCombo(_mode, ["Balanced", "Fast", "Maximum", "Intensive", "Compressed", "Auto"], 0);
         ConfigureCombo(_blockSize, ["8M", "4M", "16M", "32M", "64M"], 0);
         ConfigureCombo(_solid, ["Auto", "On", "Off"], 0);
         _threads.Minimum = 1;
@@ -1106,6 +1170,7 @@ internal sealed class CreateArchiveDialog : Form
             "fast" => CompressionMode.Fast,
             "maximum" => CompressionMode.Maximum,
             "intensive" => CompressionMode.Intensive,
+            "compressed" => CompressionMode.Compressed,
             "auto" => CompressionMode.Auto,
             _ => CompressionMode.Balanced
         };
@@ -1268,4 +1333,111 @@ internal sealed class PasswordDialog : Form
     }
 
     public PasswordContext? Password => PasswordContext.FromNullable(_password.Text);
+}
+
+internal sealed class IsoToDriveDialog : Form
+{
+    private readonly ComboBox _drives = new();
+    private readonly CheckBox _overwrite = new();
+
+    public IsoToDriveDialog(string isoPath)
+    {
+        Text = "Extract ISO to removable drive";
+        ClientSize = new Size(520, 172);
+        StartPosition = FormStartPosition.CenterParent;
+        Font = new Font("Segoe UI", 9F);
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(10),
+            ColumnCount = 2,
+            RowCount = 4
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+
+        var image = new TextBox
+        {
+            Text = isoPath,
+            ReadOnly = true,
+            Dock = DockStyle.Fill
+        };
+        _drives.DropDownStyle = ComboBoxStyle.DropDownList;
+        _drives.Dock = DockStyle.Fill;
+        _overwrite.Text = "Overwrite existing files with matching names";
+        _overwrite.AutoSize = true;
+
+        root.Controls.Add(DialogLabel("ISO image"), 0, 0);
+        root.Controls.Add(image, 1, 0);
+        root.Controls.Add(DialogLabel("Drive"), 0, 1);
+        root.Controls.Add(_drives, 1, 1);
+        root.Controls.Add(_overwrite, 1, 2);
+
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+        footer.Controls.Add(new Button { Text = "Extract", DialogResult = DialogResult.OK, Width = 88 });
+        footer.Controls.Add(new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 82 });
+        root.Controls.Add(footer, 0, 3);
+        root.SetColumnSpan(footer, 2);
+        AcceptButton = footer.Controls.OfType<Button>().First();
+        CancelButton = footer.Controls.OfType<Button>().Last();
+
+        foreach (var drive in DriveInfo.GetDrives().Where(x => x.DriveType == DriveType.Removable && x.IsReady))
+        {
+            _drives.Items.Add(new DriveChoice(drive));
+        }
+
+        if (_drives.Items.Count > 0)
+        {
+            _drives.SelectedIndex = 0;
+        }
+        else
+        {
+            _drives.Items.Add("No ready removable drives found");
+            _drives.SelectedIndex = 0;
+            footer.Controls.OfType<Button>().First().Enabled = false;
+        }
+
+        Controls.Add(root);
+    }
+
+    public string SelectedDriveRoot => _drives.SelectedItem is DriveChoice choice ? choice.Root : string.Empty;
+    public bool Overwrite => _overwrite.Checked;
+
+    private static Label DialogLabel(string text)
+    {
+        return new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return unit == 0 ? $"{bytes} B" : $"{value:F2} {units[unit]}";
+    }
+
+    private sealed class DriveChoice
+    {
+        public DriveChoice(DriveInfo drive)
+        {
+            Root = drive.RootDirectory.FullName;
+            var label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? "Removable drive" : drive.VolumeLabel;
+            Display = $"{label} ({Root}) - {FormatBytes(drive.AvailableFreeSpace)} free";
+        }
+
+        public string Root { get; }
+        private string Display { get; }
+        public override string ToString() => Display;
+    }
 }

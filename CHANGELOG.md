@@ -4,6 +4,16 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.7.0
+
+- Added `compressed`/`ultra` mode for strongest ratio-focused archive creation.
+- Added external 7-Zip ultra-solid `.7z` creation for compressed/max modes when `7z.exe` is installed.
+- Added WinRAR/RAR discovery through Windows uninstall registry locations, covering non-default installs such as `D:\WinRAR`.
+- Added RAR5 solid best-compression `.rar` creation for `--mode compressed --solid on` using installed WinRAR/RAR tools.
+- Added `.iso` shell integration and desktop workflow to extract ISO contents to a selected removable drive without formatting or raw-writing the drive.
+- Added `extract --no-verify` and `--quiet` options for faster benchmark and extraction workflows.
+- Added WinRAR and 7-Zip comparison scripts under `scripts/`.
+- Updated README and shell integration documentation for compressed mode, ISO extraction, and expanded archive support.
 - Added an `intensive` compression mode for ratio-focused LPC candidate testing and surfaced it in CLI, desktop create settings, and documentation.
 - Added single-input auto `.lpc` naming for CLI compression and collision-safe desktop create defaults.
 - Added password confirmation for interactive encrypted archive creation.

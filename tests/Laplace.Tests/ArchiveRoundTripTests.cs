@@ -224,6 +224,67 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public void CompressedMode_UsesStrongestCandidates_AndMostRatioFocusedScoring()
+    {
+        var engine = new AdaptiveCompressionEngine();
+        var analysis = new CompressionAnalysis
+        {
+            FileTypeCategory = FileTypeCategory.SourceCode,
+            Entropy = 4.2,
+            TextRatio = 0.98,
+            CompressibilityEstimate = 0.8
+        };
+
+        var candidates = engine.GetCandidates(CompressionMode.Compressed, analysis);
+
+        Assert.Equal(CompressionMethod.Zpaq, candidates[0]);
+        Assert.Equal(CompressionMethod.Bsc, candidates[1]);
+        Assert.Contains(CompressionMethod.LzmaMax, candidates);
+        Assert.True(
+            engine.Score(CompressionMode.Compressed, CompressionMethod.LzmaMax, analysis, 0.20, 0.01, 0.90) >
+            engine.Score(CompressionMode.Intensive, CompressionMethod.LzmaMax, analysis, 0.20, 0.01, 0.90));
+    }
+
+    [Fact]
+    public void RarCompressedMode_UsesRar5SolidMaxCompression()
+    {
+        var args = RarArchiveWriter.BuildRarArguments(
+            "archive.rar",
+            new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Compressed,
+                SolidMode = SolidMode.Auto,
+                Threads = 64
+            },
+            ["src"]);
+
+        Assert.Contains("-ma5", args);
+        Assert.Contains("-m5", args);
+        Assert.Contains("-s", args);
+        Assert.Contains("-md256m", args);
+        Assert.Contains("-mt32", args);
+        Assert.DoesNotContain("-s-", args);
+    }
+
+    [Fact]
+    public void RarSolidOff_DisablesSolidArchive()
+    {
+        var args = RarArchiveWriter.BuildRarArguments(
+            "archive.rar",
+            new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Compressed,
+                SolidMode = SolidMode.Off,
+                Threads = 4
+            },
+            ["src"]);
+
+        Assert.Contains("-s-", args);
+        Assert.DoesNotContain("-s", args);
+        Assert.Contains("-mt4", args);
+    }
+
+    [Fact]
     public void Blosc2Compressor_RoundTripsStructuredBinaryData()
     {
         var data = new byte[256 * 1024];

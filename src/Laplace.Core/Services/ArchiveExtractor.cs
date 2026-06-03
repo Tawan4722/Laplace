@@ -92,78 +92,87 @@ public sealed class ArchiveExtractor
                     FileShare.None,
                     1 << 20,
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
-                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                IncrementalHash? hash = options.VerifyChecksums && entry.ChecksumType == ChecksumType.Sha256
+                    ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+                    : null;
 
-                if (!blocksByFileId.TryGetValue(entry.EntryId, out var fileBlocks))
+                try
                 {
-                    fileBlocks = [];
-                }
-
-                foreach (var block in fileBlocks)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    archiveStream.Position = block.DataOffset;
-                    var compressedBytes = new byte[block.CompressedBlockSize];
-                    var read = await archiveStream.ReadAsync(compressedBytes.AsMemory(0, compressedBytes.Length), cancellationToken).ConfigureAwait(false);
-                    if (read != compressedBytes.Length)
+                    if (!blocksByFileId.TryGetValue(entry.EntryId, out var fileBlocks))
                     {
-                        throw new EndOfStreamException($"Unexpected EOF while reading block #{block.BlockId}.");
+                        fileBlocks = [];
                     }
 
-                    var actualChecksum = ChecksumService.ComputeCrc32C(compressedBytes);
-                    if (actualChecksum != block.BlockChecksumCrc32C)
+                    foreach (var block in fileBlocks)
                     {
-                        throw new InvalidDataException($"Block checksum mismatch at block #{block.BlockId}.");
-                    }
+                        cancellationToken.ThrowIfCancellationRequested();
 
-                    if (archive.Header.IsEncrypted)
-                    {
-                        try
+                        archiveStream.Position = block.DataOffset;
+                        var compressedBytes = new byte[block.CompressedBlockSize];
+                        var read = await archiveStream.ReadAsync(compressedBytes.AsMemory(0, compressedBytes.Length), cancellationToken).ConfigureAwait(false);
+                        if (read != compressedBytes.Length)
                         {
-                            compressedBytes = ArchiveEncryption.DecryptBlock(compressedBytes, encryptionKey, block);
+                            throw new EndOfStreamException($"Unexpected EOF while reading block #{block.BlockId}.");
                         }
-                        catch (CryptographicException)
+
+                        var actualChecksum = ChecksumService.ComputeCrc32C(compressedBytes);
+                        if (actualChecksum != block.BlockChecksumCrc32C)
                         {
-                            throw new ArchivePasswordException($"Invalid password or corrupted encrypted block #{block.BlockId}.");
+                            throw new InvalidDataException($"Block checksum mismatch at block #{block.BlockId}.");
+                        }
+
+                        if (archive.Header.IsEncrypted)
+                        {
+                            try
+                            {
+                                compressedBytes = ArchiveEncryption.DecryptBlock(compressedBytes, encryptionKey, block);
+                            }
+                            catch (CryptographicException)
+                            {
+                                throw new ArchivePasswordException($"Invalid password or corrupted encrypted block #{block.BlockId}.");
+                            }
+                        }
+
+                        byte[] decompressed;
+                        if (block.CompressionMethod == CompressionMethod.Raw || block.IsRaw)
+                        {
+                            decompressed = compressedBytes;
+                        }
+                        else
+                        {
+                            var decompressor = _compressorRegistry.GetCompressor(block.CompressionMethod);
+                            decompressed = decompressor.Decompress(compressedBytes, block.OriginalBlockSize);
+                        }
+
+                        if (decompressed.Length != block.OriginalBlockSize)
+                        {
+                            throw new InvalidDataException($"Unexpected decompressed block size at block #{block.BlockId}.");
+                        }
+
+                        hash?.AppendData(decompressed);
+                        await output.WriteAsync(decompressed, cancellationToken).ConfigureAwait(false);
+                        processedBytes += decompressed.Length;
+                        progress?.Report(new ArchiveOperationProgress
+                        {
+                            CurrentItem = entry.RelativePath,
+                            ProcessedBytes = processedBytes,
+                            TotalBytes = totalBytes,
+                            Percent = totalBytes == 0 ? 100 : (double)processedBytes / totalBytes * 100d
+                        });
+                    }
+
+                    if (hash is not null)
+                    {
+                        var fileHash = hash.GetHashAndReset();
+                        if (!fileHash.SequenceEqual(entry.FileChecksum))
+                        {
+                            throw new InvalidDataException($"File checksum mismatch for {entry.RelativePath}.");
                         }
                     }
-
-                    byte[] decompressed;
-                    if (block.CompressionMethod == CompressionMethod.Raw || block.IsRaw)
-                    {
-                        decompressed = compressedBytes;
-                    }
-                    else
-                    {
-                        var decompressor = _compressorRegistry.GetCompressor(block.CompressionMethod);
-                        decompressed = decompressor.Decompress(compressedBytes, block.OriginalBlockSize);
-                    }
-
-                    if (decompressed.Length != block.OriginalBlockSize)
-                    {
-                        throw new InvalidDataException($"Unexpected decompressed block size at block #{block.BlockId}.");
-                    }
-
-                    hash.AppendData(decompressed);
-                    await output.WriteAsync(decompressed, cancellationToken).ConfigureAwait(false);
-                    processedBytes += decompressed.Length;
-                    progress?.Report(new ArchiveOperationProgress
-                    {
-                        CurrentItem = entry.RelativePath,
-                        ProcessedBytes = processedBytes,
-                        TotalBytes = totalBytes,
-                        Percent = totalBytes == 0 ? 100 : (double)processedBytes / totalBytes * 100d
-                    });
                 }
-
-                if (options.VerifyChecksums && entry.ChecksumType == ChecksumType.Sha256)
+                finally
                 {
-                    var fileHash = hash.GetHashAndReset();
-                    if (!fileHash.SequenceEqual(entry.FileChecksum))
-                    {
-                        throw new InvalidDataException($"File checksum mismatch for {entry.RelativePath}.");
-                    }
+                    hash?.Dispose();
                 }
 
                 TryRestoreFileMetadata(outPath, entry);

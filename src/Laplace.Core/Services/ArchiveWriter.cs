@@ -292,6 +292,11 @@ public sealed class ArchiveWriter
 
     private CompressionMethod SelectPreferredMethod(CompressionMode mode, CompressionAnalysis analysis, ReadOnlySpan<byte> sample)
     {
+        if (mode == CompressionMode.Fast)
+        {
+            return SelectFastMethod(analysis);
+        }
+
         var bestMethod = CompressionMethod.Raw;
         var bestScore = double.MinValue;
         foreach (var candidate in _adaptiveCompressionEngine.GetCandidates(mode, analysis).Distinct())
@@ -336,6 +341,17 @@ public sealed class ArchiveWriter
         }
 
         return bestMethod;
+    }
+
+    private static CompressionMethod SelectFastMethod(CompressionAnalysis analysis)
+    {
+        if (analysis.LikelyAlreadyCompressed ||
+            analysis.FileTypeCategory is FileTypeCategory.Image or FileTypeCategory.Video or FileTypeCategory.Audio or FileTypeCategory.Archive)
+        {
+            return CompressionMethod.Raw;
+        }
+
+        return CompressionMethod.Lz4Fast;
     }
 
     private static double EstimateRelativeSpeed(CompressionMethod method)

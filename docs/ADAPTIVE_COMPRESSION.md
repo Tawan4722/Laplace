@@ -4,7 +4,7 @@
 
 The adaptive selector uses:
 
-- compression mode (`fast`, `balanced`, `maximum`, `intensive`, `auto`)
+- compression mode (`fast`, `balanced`, `maximum`, `intensive`, `compressed`, `auto`)
 - file extension hints
 - entropy estimate from sampled bytes
 - repetition estimate from sampled bytes
@@ -17,6 +17,7 @@ The adaptive selector uses:
    - `balanced` -> prioritize `ZSTD_BALANCED` and `BLOSC2`
    - `maximum` -> prioritize `BSC` when configured, then `LZMA_MAX` / `ZSTD_HIGH`
    - `intensive` -> try the strongest available candidates, including configured `ZPAQ` / `BSC`, even for data that looks pre-compressed
+   - `compressed` -> strongest ratio-first profile; for `.7z` output, prefer installed 7-Zip solid LZMA2; for `.rar`, prefer installed WinRAR/RAR with RAR5 solid best compression
    - `auto` -> entropy/repetition/file-type-based candidate set
 3. Every block is checked after compression:
    - if `compressed_size >= original_size`, store block as `RAW`.
@@ -45,6 +46,7 @@ Weights are implemented and can be tuned in code.
 - `balanced`: default tradeoff
 - `maximum`: favor smaller size
 - `intensive`: spend more CPU on ratio-focused candidate testing
+- `compressed`: strongest available ratio-first profile
 - `auto`: choose per block/file using content signals
 
 ## Advanced Codec Candidates
@@ -65,7 +67,7 @@ Standard dictionary compressors such as ZIP-style Deflate, LZ4, Zstd, and many 7
 
 That lets ZPAQ capture statistical structure that is not limited to recent exact string repeats. The tradeoff is cost: this style of modeling can be extremely CPU-intensive and much slower than LZ4, Zstd, Deflate, or normal LZMA workflows.
 
-Laplace fit: `ZPAQ` is an optional `intensive` candidate for cases where compressed size matters more than compression time. It is enabled by setting both `LAPLACE_ZPAQ_COMPRESS_COMMAND` and `LAPLACE_ZPAQ_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`.
+Laplace fit: `ZPAQ` is an optional `intensive`/`compressed` candidate for cases where compressed size matters more than compression time. It is enabled by setting both `LAPLACE_ZPAQ_COMPRESS_COMMAND` and `LAPLACE_ZPAQ_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`.
 
 ### BSC: Effective via Massive Parallelism
 
@@ -73,4 +75,4 @@ BSC is a block-sorting compressor built around Burrows-Wheeler-style transforms.
 
 Some BSC builds can use GPU acceleration, which makes it interesting for large datasets where high-ratio compression would otherwise take too long on CPU alone. The practical drawback is deployment complexity: GPU acceleration depends on hardware, drivers, native binaries, and a CPU fallback path.
 
-Laplace fit: `BSC` is an optional `maximum`/`intensive` candidate for large local datasets. It is enabled by setting both `LAPLACE_BSC_COMPRESS_COMMAND` and `LAPLACE_BSC_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`.
+Laplace fit: `BSC` is an optional `maximum`/`intensive`/`compressed` candidate for large local datasets. It is enabled by setting both `LAPLACE_BSC_COMPRESS_COMMAND` and `LAPLACE_BSC_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`.

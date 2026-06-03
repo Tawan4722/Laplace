@@ -32,7 +32,8 @@ laplace integrate install --cli-path "C:\Program Files\Laplace\laplace.exe"
   - Find in archive
   - Repair archive
   - Show archive details
-- Archive menus are registered for `.lpc`, `.zip`, `.7z`, `.rar`, `.tar`, `.gz`, `.tgz`, `.bz2`, `.xz`, `.zst`, and `.lzip` without taking over the default app for non-`.lpc` formats.
+- Archive menus are registered for `.lpc`, `.zip`, `.7z`, `.rar`, `.iso`, `.tar`, `.gz`, `.tgz`, `.bz2`, `.xz`, `.zst`, and `.lzip` without taking over the default app for non-`.lpc` formats.
+- `.iso` menus also include `Extract ISO to removable drive...`, which opens the desktop app and extracts ISO contents to a selected removable drive. It does not format the drive or raw-write disk sectors.
 - A branded `Laplace` cascade menu for normal files, folders, and folder background:
   - Estimate archive size
   - Create archive...

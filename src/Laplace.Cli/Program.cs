@@ -67,6 +67,7 @@ internal static class Program
                 "extract-to-folder" => await ExtractToFolderAsync(archives, remaining).ConfigureAwait(false),
                 "extract-to-named-folder" => await ExtractToNamedFolderAsync(archives, remaining).ConfigureAwait(false),
                 "extract-dialog" => ExtractDialogCommand(remaining),
+                "iso-to-drive-dialog" => IsoToDriveDialogCommand(remaining),
                 "compress-dialog" => CompressDialogCommand(remaining),
                 "integrate" => IntegrateCommand(remaining),
                 _ => UnknownCommand(command)
@@ -75,6 +76,11 @@ internal static class Program
         catch (Exception ex)
         {
             Console.Error.WriteLine($"laplace error: {ex.Message}");
+            if (Environment.GetEnvironmentVariable("LAPLACE_DEBUG_STACK") == "1")
+            {
+                Console.Error.WriteLine(ex);
+            }
+
             return 2;
         }
     }
@@ -131,6 +137,7 @@ internal static class Program
 
         var optionArgs = args.Skip(optionStart).ToArray();
         var options = ParseCreateOptions(optionArgs);
+        var quiet = IsQuiet(optionArgs);
         var passwordOptions = ParsePasswordOptions(optionArgs);
         if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
         {
@@ -141,16 +148,16 @@ internal static class Program
                 confirmInteractivePassword: passwordOptions.EncryptRequested && !passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         }
 
+        var originalSize = GetInputSize(inputPaths);
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine($"Compressing {inputPaths.Length} input path(s) -> '{outputPath}'");
 
-        await archives.CompressAsync(inputPaths, outputPath, options, ProgressToConsole()).ConfigureAwait(false);
+        await archives.CompressAsync(inputPaths, outputPath, options, quiet ? null : ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
-        var info = archives.Info(outputPath, options.Password);
         Console.WriteLine();
         Console.WriteLine("Compression completed.");
-        PrintSizeStats(info.OriginalSize, info.CompressedSize, stopwatch.Elapsed);
+        PrintSizeStats(originalSize, new FileInfo(outputPath).Length, stopwatch.Elapsed);
 
         if (options.VerifyAfterCompression)
         {
@@ -179,6 +186,7 @@ internal static class Program
         var optionArgs = args.Skip(1).ToArray();
         var outputPath = ArchivePathHelper.ResolveBesideArchivePath(inputPath);
         var options = ParseCreateOptions(optionArgs);
+        var quiet = IsQuiet(optionArgs);
         var passwordOptions = ParsePasswordOptions(optionArgs);
         if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
         {
@@ -189,16 +197,16 @@ internal static class Program
                 confirmInteractivePassword: passwordOptions.EncryptRequested && !passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         }
 
+        var originalSize = GetInputSize([inputPath]);
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine($"Compressing '{inputPath}' -> '{outputPath}'");
 
-        await archives.CompressAsync([inputPath], outputPath, options, ProgressToConsole()).ConfigureAwait(false);
+        await archives.CompressAsync([inputPath], outputPath, options, quiet ? null : ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
-        var info = archives.Info(outputPath, options.Password);
         Console.WriteLine();
         Console.WriteLine("Compression completed.");
-        PrintSizeStats(info.OriginalSize, info.CompressedSize, stopwatch.Elapsed);
+        PrintSizeStats(originalSize, new FileInfo(outputPath).Length, stopwatch.Elapsed);
 
         if (options.VerifyAfterCompression)
         {
@@ -226,7 +234,7 @@ internal static class Program
 
         if (positional.Count < 1)
         {
-            Console.Error.WriteLine("Usage: laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
+            Console.Error.WriteLine("Usage: laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
             return 1;
         }
 
@@ -242,13 +250,15 @@ internal static class Program
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace extract <input_archive> <output_folder> [--overwrite] [--verify|--no-verify] [--quiet] [--password <value>|--password-file <path>]");
             return 1;
         }
 
         var inputArchive = args[0];
         var outputFolder = args[1];
         var overwrite = args.Any(x => x.Equals("--overwrite", StringComparison.OrdinalIgnoreCase));
+        var verifyChecksums = ParseVerifyChecksums(args);
+        var quiet = IsQuiet(args);
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(
             passwordOptions,
@@ -268,10 +278,10 @@ internal static class Program
                 new ExtractArchiveOptions
                 {
                     Overwrite = overwrite,
-                    VerifyChecksums = true,
+                    VerifyChecksums = verifyChecksums,
                     Password = resolvedPassword
                 },
-                ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
+                quiet ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
 
         stopwatch.Stop();
         Console.WriteLine();
@@ -802,6 +812,29 @@ internal static class Program
         return options;
     }
 
+    private static bool ParseVerifyChecksums(string[] args)
+    {
+        var verify = true;
+        foreach (var arg in args)
+        {
+            if (arg.Equals("--verify", StringComparison.OrdinalIgnoreCase))
+            {
+                verify = true;
+            }
+            else if (arg.Equals("--no-verify", StringComparison.OrdinalIgnoreCase))
+            {
+                verify = false;
+            }
+        }
+
+        return verify;
+    }
+
+    private static bool IsQuiet(string[] args)
+    {
+        return args.Any(x => x.Equals("--quiet", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static async Task<(string ArchivePath, string[] Operands, MutateArchiveOptions Options, ParsedPasswordOptions PasswordOptions)> ParseMutationCommandAsync(
         string[] args,
         string usage)
@@ -1053,6 +1086,7 @@ internal static class Program
             "balanced" => CompressionMode.Balanced,
             "maximum" => CompressionMode.Maximum,
             "intensive" => CompressionMode.Intensive,
+            "compressed" or "ultra" => CompressionMode.Compressed,
             "auto" => CompressionMode.Auto,
             _ => throw new ArgumentOutOfRangeException(nameof(mode), $"Unknown mode: {mode}")
         };
@@ -1108,14 +1142,14 @@ internal static class Program
     {
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--encrypt|--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
-        Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--quiet] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--quiet] [--encrypt|--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
+        Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--verify|--no-verify] [--quiet] [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace info <input_archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace test <input_archive> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace add <archive> <input_path...> [--mode fast|balanced|maximum|intensive|auto] [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace add <archive> <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace freshen <archive> <input_path...> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace delete <archive> <entry_path_or_id...> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace rename <archive.lpc> <entry_path_or_id> <new_entry_path> [--password <value>|--password-file <path>]");
@@ -1130,6 +1164,7 @@ internal static class Program
         Console.WriteLine("  laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>]");
         Console.WriteLine("  laplace extract-dialog <archive>");
+        Console.WriteLine("  laplace iso-to-drive-dialog <image.iso>");
         Console.WriteLine("  laplace integrate install|uninstall|status [--cli-path <path-to-laplace.exe>]");
     }
 
@@ -1151,6 +1186,25 @@ internal static class Program
         Console.WriteLine($"Space saved: {saved} bytes");
         Console.WriteLine($"Time used: {elapsed.TotalSeconds:F2}s");
         Console.WriteLine($"Compression speed: {FormatSpeed(originalBytes, elapsed)}");
+    }
+
+    private static long GetInputSize(IEnumerable<string> inputPaths)
+    {
+        long total = 0;
+        foreach (var path in inputPaths)
+        {
+            if (File.Exists(path))
+            {
+                total += new FileInfo(path).Length;
+            }
+            else if (Directory.Exists(path))
+            {
+                total += Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
+                    .Sum(file => new FileInfo(file).Length);
+            }
+        }
+
+        return total;
     }
 
     private static void PrintArchiveSummary(string archivePath, ArchiveSummary info)
@@ -1388,6 +1442,23 @@ internal static class Program
         }
 
         Console.WriteLine("Laplace desktop UI was not found next to the CLI. Use `laplace extract-here` or `laplace extract-to-folder` instead.");
+        return 0;
+    }
+
+    private static int IsoToDriveDialogCommand(string[] args)
+    {
+        if (args.Length < 1)
+        {
+            Console.Error.WriteLine("Usage: laplace iso-to-drive-dialog <image.iso>");
+            return 1;
+        }
+
+        if (TryLaunchDesktop(["--iso-to-drive", args[0]]))
+        {
+            return 0;
+        }
+
+        Console.WriteLine("Laplace desktop UI was not found next to the CLI. Use `laplace extract-to-folder` and choose a removable drive instead.");
         return 0;
     }
 

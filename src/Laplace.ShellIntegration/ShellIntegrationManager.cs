@@ -17,6 +17,7 @@ public sealed class ShellIntegrationManager
         ".zip",
         ".7z",
         ".rar",
+        ".iso",
         ".tar",
         ".gz",
         ".tgz",
@@ -58,7 +59,7 @@ public sealed class ShellIntegrationManager
         RegisterArchiveMenu(classes, $"{ProgId}\\shell\\laplace", quotedCli, quotedGui);
         foreach (var extension in ArchiveExtensions.Where(x => !string.Equals(x, Extension, StringComparison.OrdinalIgnoreCase)))
         {
-            RegisterArchiveMenu(classes, $@"SystemFileAssociations\{extension}\shell\laplace", quotedCli, quotedGui);
+            RegisterArchiveMenu(classes, $@"SystemFileAssociations\{extension}\shell\laplace", quotedCli, quotedGui, string.Equals(extension, ".iso", StringComparison.OrdinalIgnoreCase));
         }
 
         RegisterCreateMenu(classes, @"*\shell\laplace", quotedCli, quotedGui, "%1", BuildNonArchiveFileFilter());
@@ -123,7 +124,7 @@ public sealed class ShellIntegrationManager
         };
     }
 
-    private static void RegisterArchiveMenu(RegistryKey classes, string keyPath, string quotedCli, string quotedGui)
+    private static void RegisterArchiveMenu(RegistryKey classes, string keyPath, string quotedCli, string quotedGui, bool includeIsoDriveVerb = false)
     {
         using var menuKey = classes.CreateSubKey(keyPath, writable: true);
         ConfigureCascadeRoot(menuKey, quotedGui);
@@ -136,6 +137,10 @@ public sealed class ShellIntegrationManager
         RegisterCascadeVerb(menuKey, "find_archive", "Find in archive", $"{quotedCli} find \"%1\"");
         RegisterCascadeVerb(menuKey, "repair_archive", "Repair archive", $"{quotedCli} repair \"%1\"");
         RegisterCascadeVerb(menuKey, "archive_info", "Show archive details", $"{quotedCli} info \"%1\"");
+        if (includeIsoDriveVerb)
+        {
+            RegisterCascadeVerb(menuKey, "iso_to_drive", "Extract ISO to removable drive...", $"{quotedCli} iso-to-drive-dialog \"%1\"");
+        }
     }
 
     private static void RegisterCreateMenu(
