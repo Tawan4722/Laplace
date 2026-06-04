@@ -11,6 +11,7 @@ public sealed class SharpCompressArchiveHandler
 {
     public IReadOnlyList<ArchiveEntryListing> List(string archivePath, PasswordContext? password = null)
     {
+        EnsureNoKeyfile(password);
         try
         {
             using var archive = ArchiveFactory.OpenArchive(archivePath, CreateReaderOptions(archivePath, password));
@@ -89,6 +90,7 @@ public sealed class SharpCompressArchiveHandler
     {
         long processedBytes = 0;
         Directory.CreateDirectory(destinationFolder);
+        EnsureNoKeyfile(options.Password);
 
         try
         {
@@ -173,6 +175,7 @@ public sealed class SharpCompressArchiveHandler
     {
         try
         {
+            EnsureNoKeyfile(password);
             using var archive = ArchiveFactory.OpenArchive(archivePath, CreateReaderOptions(archivePath, password));
             var files = 0;
             var entries = 0;
@@ -241,6 +244,14 @@ public sealed class SharpCompressArchiveHandler
         return ex.Message.Contains("password", StringComparison.OrdinalIgnoreCase) ||
                ex.Message.Contains("encrypted", StringComparison.OrdinalIgnoreCase) ||
                ex.Message.Contains("decrypt", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void EnsureNoKeyfile(PasswordContext? password)
+    {
+        if (password?.HasKeyfile == true)
+        {
+            throw new NotSupportedException("Keyfiles are supported for LPC archives only.");
+        }
     }
 
     internal static bool IsUnsupportedArchiveFailure(Exception ex)

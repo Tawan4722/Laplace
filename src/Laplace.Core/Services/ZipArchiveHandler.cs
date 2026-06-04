@@ -9,6 +9,7 @@ public sealed class ZipArchiveHandler
 {
     public IReadOnlyList<ArchiveEntryListing> List(string archivePath, PasswordContext? password = null)
     {
+        EnsureNoKeyfile(password);
         using var zip = OpenZip(archivePath, password);
         return zip.Cast<ZipEntry>()
             .Select((entry, index) => new ArchiveEntryListing
@@ -53,6 +54,7 @@ public sealed class ZipArchiveHandler
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        EnsureNoKeyfile(options.Password);
         Directory.CreateDirectory(destinationFolder);
         using var zip = OpenZip(archivePath, options.Password);
         var entries = zip.Cast<ZipEntry>()
@@ -127,6 +129,7 @@ public sealed class ZipArchiveHandler
     {
         try
         {
+            EnsureNoKeyfile(password);
             using var zip = OpenZip(archivePath, password);
             var files = 0;
             var entries = 0;
@@ -179,6 +182,14 @@ public sealed class ZipArchiveHandler
         return ex.Message.Contains("password", StringComparison.OrdinalIgnoreCase) ||
                ex.Message.Contains("AES", StringComparison.OrdinalIgnoreCase) ||
                ex.Message.Contains("decrypt", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void EnsureNoKeyfile(PasswordContext? password)
+    {
+        if (password?.HasKeyfile == true)
+        {
+            throw new NotSupportedException("Keyfiles are supported for LPC archives only.");
+        }
     }
 
     private static IEnumerable<IndexedZipEntry> FilterSelectedEntries(

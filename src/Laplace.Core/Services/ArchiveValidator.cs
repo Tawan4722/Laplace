@@ -8,7 +8,7 @@ public static class ArchiveValidator
 {
     public static void ValidateHeader(ArchiveHeader header, long archiveLength)
     {
-        if (header.FormatVersion is not (1 or 2 or 3))
+        if (header.FormatVersion is not (1 or 2 or 3 or 4))
         {
             throw new LaplaceArchiveException($"Unsupported LPC format version: {header.FormatVersion}");
         }
@@ -62,11 +62,17 @@ public static class ArchiveValidator
                 throw new LaplaceArchiveException("Invalid LPC encryption metadata.");
             }
         }
+
+        if (header.IsSolid && header.FormatVersion < 4)
+        {
+            throw new LaplaceArchiveException("Solid LPC archives require format version 4.");
+        }
     }
 
     public static void ValidateBlockEntries(IEnumerable<BlockEntryRecord> blocks, long archiveLength, ArchiveHeader? header = null)
     {
         var expectedBlockId = 0L;
+        var expectedStreamOffset = 0L;
         foreach (var block in blocks)
         {
             if (block.BlockId != expectedBlockId)
@@ -82,6 +88,16 @@ public static class ArchiveValidator
             if (!Enum.IsDefined(typeof(CompressionMethod), block.CompressionMethod))
             {
                 throw new LaplaceArchiveException($"Unknown compression method ID in block #{block.BlockId}.");
+            }
+
+            if (header?.IsSolid == true)
+            {
+                if (block.OriginalStreamOffset != expectedStreamOffset)
+                {
+                    throw new LaplaceArchiveException($"Unexpected solid stream offset at block #{block.BlockId}.");
+                }
+
+                expectedStreamOffset += block.OriginalBlockSize;
             }
 
             var end = block.DataOffset + block.CompressedBlockSize;

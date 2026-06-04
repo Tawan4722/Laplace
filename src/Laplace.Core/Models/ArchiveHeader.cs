@@ -5,6 +5,7 @@ public sealed class ArchiveHeader
     public const string Magic = "LPC1";
     public const ushort EncryptionFlag = 1;
     public const ushort LockedFlag = 2;
+    public const ushort SolidFlag = 4;
     public const byte EncryptionAlgorithmAes256Gcm = 1;
 
     public ushort FormatVersion { get; set; } = 1;
@@ -25,4 +26,5 @@ public sealed class ArchiveHeader
 
     public bool IsEncrypted => (ArchiveFlags & EncryptionFlag) != 0;
     public bool IsLocked => (ArchiveFlags & LockedFlag) != 0;
+    public bool IsSolid => (ArchiveFlags & SolidFlag) != 0;
 }

@@ -16,7 +16,7 @@ All offsets and sizes use 64-bit fields where relevant.
 | Field | Type | Notes |
 |---|---|---|
 | Magic | 4 bytes ASCII | `LPC1` |
-| FormatVersion | `UInt16` | `1` unencrypted, `2` supports encrypted payload blocks |
+| FormatVersion | `UInt16` | `1` unencrypted, `2` encrypted payload blocks, `3` locked archives, `4` solid archives |
 | ArchiveFlags | `UInt16` | bit `1` = encrypted payload blocks |
 | CreatedUnixMilliseconds | `Int64` | UTC timestamp |
 | CreatorVersion | `UInt32` | Laplace writer version |
@@ -38,8 +38,9 @@ Current archive flags:
 
 - bit `1` = encrypted payload blocks
 - bit `2` = locked archive
+- bit `4` = solid archive layout
 
-LPCv3 is currently written when the locked archive flag is used. Metadata encryption, recovery records, multi-volume output, and solid archive layout are reserved for future LPCv3 extensions and are rejected by current writers.
+LPCv3 is written when the locked archive flag is used. LPCv4 is written when the native solid archive layout is used. Metadata encryption, recovery records, and multi-volume output are still reserved and rejected by current writers.
 
 ## File Entry Table
 
@@ -55,6 +56,7 @@ Each file/folder record stores:
 - `FileAttributes` (`Int32`)
 - `IsDirectory` (`Boolean`)
 - `IsSymlink` (`Boolean`)
+- `DataStreamOffset` (`Int64`, LPCv4 only; uncompressed byte offset within the solid stream)
 - `FirstBlockIndex` (`Int64`)
 - `BlockCount` (`Int32`)
 - `CompressionSummary` (UTF-8 length-prefixed)
@@ -73,12 +75,15 @@ Each block record stores:
 - `CompressedBlockSize` (`Int32`)
 - `CompressionMethod` (`Byte`)
 - `CompressionLevel` (`Int32`)
+- `OriginalStreamOffset` (`Int64`, LPCv4 only; uncompressed byte offset where this solid block begins)
 - `DataOffset` (`Int64`)
 - `BlockChecksumCrc32C` (`UInt32`)
 - `Flags` (`UInt32`)
 - `IsRaw` (`Boolean`)
 - `EncryptionNonce` (LPCv2 only, length-prefixed)
 - `EncryptionTag` (LPCv2 only, length-prefixed)
+
+For solid LPC archives, `OwningFileEntryId` is set to `-1` and blocks are mapped back to files through `DataStreamOffset`, `FirstBlockIndex`, and `BlockCount`.
 
 ## Compression Method IDs
 

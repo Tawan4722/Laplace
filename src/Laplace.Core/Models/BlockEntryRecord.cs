@@ -10,6 +10,7 @@ public sealed class BlockEntryRecord
     public int CompressedBlockSize { get; set; }
     public CompressionMethod CompressionMethod { get; set; }
     public int CompressionLevel { get; set; }
+    public long OriginalStreamOffset { get; set; }
     public long DataOffset { get; set; }
     public uint BlockChecksumCrc32C { get; set; }
     public uint Flags { get; set; }

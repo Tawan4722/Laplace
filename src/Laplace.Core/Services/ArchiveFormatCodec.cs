@@ -122,7 +122,7 @@ internal static class ArchiveFormatCodec
         };
     }
 
-    public static void WriteFileEntries(Stream stream, IReadOnlyList<FileEntryRecord> entries)
+    public static void WriteFileEntries(Stream stream, IReadOnlyList<FileEntryRecord> entries, ushort formatVersion = 1)
     {
         using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
         foreach (var entry in entries)
@@ -137,6 +137,10 @@ internal static class ArchiveFormatCodec
             writer.Write(entry.FileAttributes);
             writer.Write(entry.IsDirectory);
             writer.Write(entry.IsSymlink);
+            if (formatVersion >= 4)
+            {
+                writer.Write(entry.DataStreamOffset);
+            }
             writer.Write(entry.FirstBlockIndex);
             writer.Write(entry.BlockCount);
             BinaryCodec.WriteUtf8String(writer, entry.CompressionSummary);
@@ -147,7 +151,7 @@ internal static class ArchiveFormatCodec
         }
     }
 
-    public static List<FileEntryRecord> ReadFileEntries(Stream stream, long count)
+    public static List<FileEntryRecord> ReadFileEntries(Stream stream, long count, ushort formatVersion = 1)
     {
         var list = new List<FileEntryRecord>((int)Math.Min(count, int.MaxValue));
         using var reader = new BinaryReader(stream, Encoding.UTF8, true);
@@ -165,12 +169,18 @@ internal static class ArchiveFormatCodec
                 ModifiedUnixMilliseconds = reader.ReadInt64(),
                 FileAttributes = reader.ReadInt32(),
                 IsDirectory = reader.ReadBoolean(),
-                IsSymlink = reader.ReadBoolean(),
-                FirstBlockIndex = reader.ReadInt64(),
-                BlockCount = reader.ReadInt32(),
-                CompressionSummary = BinaryCodec.ReadUtf8String(reader),
-                ChecksumType = (ChecksumType)reader.ReadByte()
+                IsSymlink = reader.ReadBoolean()
             };
+
+            if (formatVersion >= 4)
+            {
+                entry.DataStreamOffset = reader.ReadInt64();
+            }
+
+            entry.FirstBlockIndex = reader.ReadInt64();
+            entry.BlockCount = reader.ReadInt32();
+            entry.CompressionSummary = BinaryCodec.ReadUtf8String(reader);
+            entry.ChecksumType = (ChecksumType)reader.ReadByte();
 
             var checksumLength = reader.ReadInt32();
             if (checksumLength < 0)
@@ -203,6 +213,10 @@ internal static class ArchiveFormatCodec
             writer.Write(block.CompressedBlockSize);
             writer.Write((byte)block.CompressionMethod);
             writer.Write(block.CompressionLevel);
+            if (formatVersion >= 4)
+            {
+                writer.Write(block.OriginalStreamOffset);
+            }
             writer.Write(block.DataOffset);
             writer.Write(block.BlockChecksumCrc32C);
             writer.Write(block.Flags);
@@ -232,11 +246,17 @@ internal static class ArchiveFormatCodec
                 CompressedBlockSize = reader.ReadInt32(),
                 CompressionMethod = (CompressionMethod)reader.ReadByte(),
                 CompressionLevel = reader.ReadInt32(),
-                DataOffset = reader.ReadInt64(),
-                BlockChecksumCrc32C = reader.ReadUInt32(),
-                Flags = reader.ReadUInt32(),
-                IsRaw = reader.ReadBoolean()
             };
+
+            if (formatVersion >= 4)
+            {
+                block.OriginalStreamOffset = reader.ReadInt64();
+            }
+
+            block.DataOffset = reader.ReadInt64();
+            block.BlockChecksumCrc32C = reader.ReadUInt32();
+            block.Flags = reader.ReadUInt32();
+            block.IsRaw = reader.ReadBoolean();
 
             if (formatVersion >= 2)
             {

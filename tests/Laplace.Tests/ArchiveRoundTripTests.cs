@@ -5,6 +5,7 @@ using Laplace.Core.Enums;
 using Laplace.Core.Models;
 using Laplace.Core.Security;
 using Laplace.Core.Services;
+using System.Security.Cryptography;
 using ZipEntry = ICSharpCode.SharpZipLib.Zip.ZipEntry;
 using ZipOutputStream = ICSharpCode.SharpZipLib.Zip.ZipOutputStream;
 using Xunit;
@@ -302,6 +303,20 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public void LzmaCompressor_RoundTripsTextLikeData()
+    {
+        var data = System.Text.Encoding.UTF8.GetBytes(string.Join(Environment.NewLine, Enumerable.Repeat("laplace true lzma block", 2000)));
+
+        var compressor = new CompressorRegistry().GetCompressor(CompressionMethod.LzmaMax);
+        var compressed = compressor.Compress(data);
+        var decompressed = compressor.Decompress(compressed, data.Length);
+
+        Assert.True(compressed.Length > 5);
+        Assert.NotEqual(0x28B52FFDu, BitConverter.ToUInt32(compressed, 0));
+        Assert.Equal(data, decompressed);
+    }
+
+    [Fact]
     public void PathSecurity_BlocksTraversal()
     {
         var destination = Path.Combine(Path.GetTempPath(), "laplace-security-test");
@@ -407,6 +422,40 @@ public sealed class ArchiveRoundTripTests
         await Assert.ThrowsAsync<ArchivePasswordRequiredException>(() =>
             extractor.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true }));
 
+        await extractor.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            Password = password
+        });
+
+        Assert.Equal(await File.ReadAllTextAsync(sourceFile), await File.ReadAllTextAsync(Path.Combine(extractPath, "secret.txt")));
+    }
+
+    [Fact]
+    public async Task EncryptedLpc_WithPasswordAndKeyfile_RequiresBothFactors()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "secret.txt");
+        await File.WriteAllTextAsync(sourceFile, "two factor payload");
+        var archivePath = Path.Combine(root, "secret-2fa.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var keyfileBytes = "laplace-key-material"u8.ToArray();
+        var password = new PasswordContext("correct horse battery staple", SHA256.HashData(keyfileBytes));
+        var registry = new CompressorRegistry();
+
+        var writer = new ArchiveWriter(registry);
+        await writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Password = password,
+            VerifyAfterCompression = false
+        });
+
+        var tester = new ArchiveTester(registry);
+        Assert.True((await tester.TestAsync(archivePath, password)).Success);
+        Assert.False((await tester.TestAsync(archivePath, new PasswordContext("correct horse battery staple"))).Success);
+        Assert.False((await tester.TestAsync(archivePath, new PasswordContext(password: null, keyfileHash: SHA256.HashData(keyfileBytes)))).Success);
+
+        var extractor = new ArchiveExtractor(registry);
         await extractor.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
         {
             Overwrite = true,
@@ -538,6 +587,74 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public async Task SolidLpc_CompressThenExtract_RoundTripsAndUsesFormatV4()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        Directory.CreateDirectory(sourceDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "alpha.txt"), new string('A', 180_000));
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "beta.txt"), new string('B', 180_000));
+        var archivePath = Path.Combine(root, "payload-solid.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Maximum,
+            SolidMode = SolidMode.On,
+            BlockSizeBytes = 256 * 1024,
+            VerifyAfterCompression = false
+        });
+
+        var archive = new ArchiveReader().Read(archivePath);
+        Assert.True(archive.Header.IsSolid);
+        Assert.Equal(4, archive.Header.FormatVersion);
+        Assert.All(archive.BlockEntries, block => Assert.Equal(-1, block.OwningFileEntryId));
+        Assert.Contains(archive.FileEntries, entry => !entry.IsDirectory && entry.BlockCount > 1);
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true, VerifyChecksums = true });
+
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(sourceDir, "alpha.txt")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "alpha.txt")));
+        Assert.Equal(
+            await File.ReadAllTextAsync(Path.Combine(sourceDir, "beta.txt")),
+            await File.ReadAllTextAsync(Path.Combine(extractPath, "payload", "beta.txt")));
+    }
+
+    [Fact]
+    public async Task SolidLpc_SelectedFileExtraction_ExtractsOnlyChosenFile()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        Directory.CreateDirectory(sourceDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "alpha.txt"), new string('A', 180_000));
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "beta.txt"), new string('B', 180_000));
+        var archivePath = Path.Combine(root, "payload-solid.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var service = new UniversalArchiveService(new CompressorRegistry());
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Maximum,
+            SolidMode = SolidMode.On,
+            BlockSizeBytes = 256 * 1024,
+            VerifyAfterCompression = false
+        });
+        var selectedEntry = service.List(archivePath).Single(x => x.Path.EndsWith("alpha.txt", StringComparison.OrdinalIgnoreCase));
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            VerifyChecksums = true,
+            SelectedEntryIds = new HashSet<long> { selectedEntry.Id }
+        });
+
+        Assert.True(File.Exists(Path.Combine(extractPath, "payload", "alpha.txt")));
+        Assert.False(File.Exists(Path.Combine(extractPath, "payload", "beta.txt")));
+    }
+
+    [Fact]
     public async Task Zip_SelectedFileExtraction_ExtractsOnlyChosenFile()
     {
         var root = CreateTempFolder();
@@ -599,6 +716,41 @@ public sealed class ArchiveRoundTripTests
         Assert.True(service.Info(archivePath).IsLocked);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             mutator.DeleteAsync(archivePath, ["renamed/beta.txt"], new MutateArchiveOptions()));
+    }
+
+    [Fact]
+    public async Task LpcMutation_SolidArchive_PreservesSolidMode()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "payload");
+        Directory.CreateDirectory(sourceDir);
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "alpha.txt"), new string('A', 120_000));
+        await File.WriteAllTextAsync(Path.Combine(sourceDir, "beta.txt"), new string('B', 120_000));
+        var addedFile = Path.Combine(root, "gamma.txt");
+        await File.WriteAllTextAsync(addedFile, new string('C', 120_000));
+        var archivePath = Path.Combine(root, "payload-solid.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var registry = new CompressorRegistry();
+        var service = new UniversalArchiveService(registry);
+        var mutator = new LpcArchiveMutationService(registry);
+
+        await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Maximum,
+            SolidMode = SolidMode.On,
+            BlockSizeBytes = 192 * 1024,
+            VerifyAfterCompression = false
+        });
+
+        await mutator.AddAsync(archivePath, [addedFile], new MutateArchiveOptions());
+
+        var archive = new ArchiveReader().Read(archivePath);
+        Assert.True(archive.Header.IsSolid);
+        Assert.Equal(4, archive.Header.FormatVersion);
+        Assert.True((await service.TestAsync(archivePath)).Success);
+
+        await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true, VerifyChecksums = true });
+        Assert.Equal(new string('C', 120_000), await File.ReadAllTextAsync(Path.Combine(extractPath, "gamma.txt")));
     }
 
     [Fact]

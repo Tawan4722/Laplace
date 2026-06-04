@@ -17,7 +17,7 @@ public sealed class CompressorRegistry : ICompressorRegistry
             [CompressionMethod.ZstdFast] = new ZstdCompressor(CompressionMethod.ZstdFast, 1),
             [CompressionMethod.ZstdBalanced] = new ZstdCompressor(CompressionMethod.ZstdBalanced, 6),
             [CompressionMethod.ZstdHigh] = new ZstdCompressor(CompressionMethod.ZstdHigh, 15),
-            [CompressionMethod.LzmaMax] = new ZstdCompressor(CompressionMethod.LzmaMax, 19),
+            [CompressionMethod.LzmaMax] = new LzmaCompressor(),
             [CompressionMethod.DeflateFallback] = new DeflateCompressor(),
             [CompressionMethod.Blosc2] = new Blosc2Compressor()
         };

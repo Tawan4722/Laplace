@@ -1,57 +1,78 @@
 # Laplace Agent Guide
 
-This file is a working guide for agents and maintainers touching the Laplace repository.
+This is the operating guide for agents working in the Laplace repository. Keep it aligned with the codebase, not with assumptions.
 
-## Project Summary
+## What This Repo Is
 
-Laplace is a Windows-first archive manager written in C#/.NET 8. It has a native `.lpc` archive format, a command-line app, a WinForms desktop app, Explorer shell integration, packaging scripts, and tests.
+Laplace is a Windows-first archive manager written in C#/.NET 8. It includes:
 
-The native `.lpc` format is implemented in this repository. It is not a wrapper around 7-Zip, WinRAR, or Windows shell commands. Non-LPC formats are handled through separate managed libraries or external tooling.
+- native `.lpc` archives
+- a CLI
+- a WinForms desktop app
+- Explorer context-menu integration
+- packaging scripts
+- tests
 
-## Solution Layout
+The native `.lpc` format is implemented in this repository. Laplace is not a wrapper around 7-Zip, WinRAR, or Windows shell archive commands. Non-LPC formats are handled through managed libraries or installed external tools where that is the correct tradeoff.
 
-- `src/Laplace.Core`: archive model, LPC reader/writer/extractor/tester, format routing, encryption, path safety, adaptive compression analysis.
-- `src/Laplace.Compression`: block compressor registry and implementations.
-- `src/Laplace.Cli`: command-line entry point, command parsing, password providers, desktop-launch helpers.
-- `src/Laplace.Desktop`: Windows Forms UI for create, estimate, open/list, extract, and test workflows.
-- `src/Laplace.ShellIntegration`: per-user HKCU Explorer context-menu and `.lpc` association management.
-- `tests/Laplace.Tests`: unit, integration, and CLI black-box tests.
-- `docs`: LPC format, adaptive compression, shell integration, and MSIX notes.
-- `installer`: Inno Setup and MSIX build scripts.
-- `scripts/verify-release.ps1`: full release verification path.
+## Read First
 
-## Native LPC Behavior
+The files below explain most of the project surface:
 
-`.lpc` archives use:
+- `src/Laplace.Core/Services/ArchiveFormatDetector.cs`
+- `src/Laplace.Core/Services/UniversalArchiveService.cs`
+- `src/Laplace.Core/Services/ArchiveWriter.cs`
+- `src/Laplace.Core/Services/ArchiveExtractor.cs`
+- `src/Laplace.Core/Compression/AdaptiveCompressionEngine.cs`
+- `src/Laplace.Core/Services/WindowsNativeArchiveHandler.cs`
+- `src/Laplace.Core/Services/SharpCompressArchiveHandler.cs`
+- `src/Laplace.Core/Services/SevenZipArchiveWriter.cs`
+- `src/Laplace.Core/Services/RarArchiveWriter.cs`
+- `src/Laplace.Cli/Program.cs`
+- `src/Laplace.Desktop/MainForm.cs`
+- `src/Laplace.ShellIntegration/ShellIntegrationManager.cs`
+- `tests/Laplace.Tests/ArchiveRoundTripTests.cs`
 
-- Magic header `LPC1`.
-- Format version `1` for unencrypted archives.
-- Format version `2` for encrypted payload blocks.
-- A data section followed by file and block tables.
-- Per-block compression method metadata.
-- Header CRC32C.
-- Per-block CRC32C over stored bytes.
-- Per-file SHA-256 checksums.
-- Optional AES-256-GCM payload encryption.
-- Optional LPCv3 locked archive flag.
+## Architecture Notes
 
-Encryption protects block payload bytes only. File names, sizes, timestamps, and table metadata remain visible so `list` and `info` can work without decrypting payloads.
+### LPC
 
-LPCv3 currently exists for locked archives. Metadata encryption, recovery records, multi-volume output, and solid archive layout are reserved behind explicit unsupported-feature errors.
+`.lpc` is the native format. It supports:
 
-## Compression Model
+- header validation
+- block and file metadata
+- per-block CRC32C
+- per-file SHA-256
+- optional AES-256-GCM payload encryption
+- optional keyfile-based encryption context for LPC archives
+- locked archives through LPCv3
+- native solid archive layout through LPCv4
 
-LPC compression is adaptive and block-oriented. For each block, Laplace samples up to `64 KiB`, analyzes extension hints and byte statistics, trial-compresses candidate methods, scores them, and uses the best shrinking result. If the selected method fails or the compressed block is not smaller than the original, the block is stored as `RAW`.
+Reserved but not implemented:
 
-Compression modes:
+- metadata encryption
+- recovery records
+- multi-volume archives
+- SFX output
 
-- `fast`: throughput-first.
-- `balanced`: default tradeoff.
-- `maximum`: size-focused.
-- `intensive`: strongest candidate set and ratio-focused scoring.
-- `auto`: content-based candidate set.
+Do not describe those as implemented unless the code changes.
 
-Compression methods:
+### Compression
+
+LPC compression is adaptive and block-oriented. The engine samples data, analyzes extension hints and byte statistics, trial-compresses candidates, scores them, and stores blocks as `RAW` when compression would expand them.
+
+Current compression modes:
+
+- `fast`
+- `balanced`
+- `maximum`
+- `intensive`
+- `compressed`
+- `auto`
+
+Important implementation fact: `LZMA_MAX` is now backed by a real LZMA block compressor. It is no longer aliased to Zstd.
+
+Built-in or optional methods:
 
 - `RAW`
 - `LZ4_FAST`
@@ -64,100 +85,113 @@ Compression methods:
 - `ZPAQ`
 - `BSC`
 
-Important implementation detail: `LZMA_MAX` is currently backed by Zstd level 19, not a true LZMA implementation.
+`BLOSC2` is built in. `ZPAQ` and `BSC` are only registered when the required command templates are configured in the environment.
 
-`BLOSC2` is built in through `Blosc2.PInvoke`. `ZPAQ` and `BSC` are optional external-command adapters. They are registered only when both command templates are configured:
+### Format Routing
 
-- `LAPLACE_ZPAQ_COMPRESS_COMMAND`
-- `LAPLACE_ZPAQ_DECOMPRESS_COMMAND`
-- `LAPLACE_BSC_COMPRESS_COMMAND`
-- `LAPLACE_BSC_DECOMPRESS_COMMAND`
+Write support today:
 
-Each template must read `{input}` and write `{output}`.
+- `.lpc`: native writer
+- `.zip`: SharpZipLib writer with AES-256 ZIP support when a password is supplied
+- `.7z`: SharpCompress writer, with external 7-Zip used when the mode or options require it
+- `.rar`: delegates to installed `rar.exe` or `WinRAR.exe`
 
-## Format Routing
+Read/list/info/test/extract support today:
 
-Write support:
+- `.lpc`: native services
+- `.zip`: ZIP handler
+- `.7z`, `.rar`, `.cab`, tar variants, `.gz`, `.bz2`, `.xz`, `.zst`, `.lzip`, and `.iso`: external or native helper paths depending on the archive and runtime availability
 
-- `.lpc`: native writer.
-- `.zip`: SharpZipLib writer, AES-256 ZIP encryption when a password is supplied.
-- `.7z`: SharpCompress 7z writer using LZMA; no managed encryption support.
-- `.rar`: delegates to installed `rar.exe` or `WinRAR.exe`.
+### Safety
 
-Read/list/info/test/extract support:
+Path safety lives in `PathSecurity`. Preserve these checks:
 
-- `.lpc`: native services.
-- `.zip`: ZIP handler.
-- `.7z`, `.rar`, tar and compressed tar variants, `.gz`, `.bz2`, `.xz`, `.zst`, `.lzip`: managed external handler, with Windows `tar.exe` fallback for some unsupported non-password extraction cases.
+- reject absolute archive paths
+- reject traversal paths
+- reject alternate data streams
+- reject control characters
+- reject Windows reserved names
+- reject unsafe trailing spaces and dots
+- block extraction through existing Windows reparse points
 
-## Security Boundaries
+### Current CLI State
 
-Extraction safety is centralized in `PathSecurity` and must be preserved:
+The CLI has working support for:
 
-- Reject absolute archive paths.
-- Reject traversal segments.
-- Reject control characters.
-- Reject Windows reserved device names.
-- Reject alternate data stream syntax.
-- Reject unsafe trailing spaces or dots.
-- Prevent extraction through existing Windows reparse points.
+- `--json` on major reporting and automation commands
+- `--dry-run` on create, extract, and mutation workflows
+- `--from-file` for newline-delimited operand lists on batch-oriented commands
+- glob-driven `find`, `extract`, and LPC `delete`
+- `diff`, `merge`, and `split`
+- shell completion scripts in `scripts/completions`
 
-Encrypted LPC archives use PBKDF2-HMAC-SHA256 with bounded iteration counts. New encrypted archives default to `600,000` iterations and 32-byte salts.
+Important behavioral limits:
 
-## CLI Commands
+- `view` writes raw bytes to stdout and is not JSON-wrapped
+- structured progress output for scripting is not implemented yet
+- `--json` is broad but not literally present on every command
 
-Main commands:
+### Current Encryption State
 
-- `compress`
-- `compress-beside`
-- `estimate`
-- `extract`
-- `list`
-- `info`
-- `test`
-- `add`
-- `freshen`
-- `delete`
-- `rename`
-- `comment`
-- `lock`
-- `find`
-- `view`
-- `repair`
-- `benchmark`
-- `open`
-- `extract-here`
-- `extract-to-folder`
-- `extract-to-named-folder`
-- `extract-dialog`
-- `compress-dialog`
-- `integrate install|status|uninstall`
+LPC encryption today supports:
 
-Password inputs:
+- password-only archives
+- keyfile-only archives
+- password + keyfile archives
+- fixed-time confirmation comparison during interactive password confirmation
 
-- `--password <value>`
-- `--password-file <path>`
-- `--encrypt` for prompting during create workflows.
+Important implementation fact:
 
-Non-interactive runs must use explicit password inputs.
+- LPC encrypted key derivation is still PBKDF2-HMAC-SHA256 with bounded iterations
+- keyfiles are supported for LPC archives only
+- ZIP, 7z, RAR, and other non-LPC paths reject keyfile-based encryption options
+- encryption still protects payload blocks only; filenames and table metadata remain visible
+- solid LPC is single-stream and works for create, list, extract, test, and rewrite-style mutation
+- multi-threaded solid block compression is still not implemented
 
-## Desktop UI
+## To Do
 
-The desktop app supports create, estimate, open/list, extract, delete selected LPC entries, and test workflows. It supports selected-entry extraction for LPC, ZIP, and managed external archives where entry IDs are available.
+Current format-level backlog after native LPC solid layout:
 
-Do not assume every WinRAR-style desktop action is implemented. Core LPC deletion is wired; add/rename/comment/lock/repair still primarily live in the CLI.
+- [ ] Argon2id key-derivation versioning for LPC encrypted archives
+- [ ] Metadata encryption for LPC file and block tables
+- [ ] Multi-threaded solid block compression on top of the LPCv4 solid layout
+- [ ] Recovery records and Reed-Solomon repair data
 
-## Shell Integration
+Recommended order:
 
-Shell integration is per-user and writes under `HKCU\Software\Classes`. It does not require admin privileges.
+1. Argon2id KDF versioning
+2. Metadata encryption
+3. Parallel solid compression
+4. Recovery and repair
 
-It registers:
+## Change Rules
 
-- `.lpc` association to `Laplace.Archive`.
-- A branded `Laplace` archive submenu.
-- Create/estimate actions for files, folders, and folder background.
+When changing supported formats, update all of these together:
 
-The integration intentionally uses Explorer single-item context actions. True multi-select batching would require a native COM shell extension.
+- detector / routing code
+- desktop UI filters and archive checks
+- shell integration menus
+- tests
+- README
+
+If the change affects behavior that is exposed to users, do not leave the docs behind. Keep the file lists and command examples in sync with the code.
+
+When a feature depends on installed external tools, say so explicitly. Do not imply built-in support where it does not exist.
+
+## Operational Limits
+
+Do not claim:
+
+- Laplace is generally better than RAR or 7-Zip without a benchmark
+- `ZPAQ` or `BSC` are built in
+- CAB has a native first-class writer
+- Argon2id-based LPC key derivation is implemented
+- LPC metadata encryption is implemented
+- LPC recovery/self-healing is implemented
+- metadata encryption, recovery records, or multi-volume LPC are implemented
+
+If a change touches release packaging, verify the release script and installer/MSIX paths as well.
 
 ## Build And Test
 
@@ -175,20 +209,28 @@ Release verification:
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version 1.5.0 `
-  -MsixVersion 1.5.0.0 `
+  -Version <version> `
+  -MsixVersion <version>.0 `
   -SelfContained
 ```
 
-Installer build requires Inno Setup 6. MSIX build requires Windows SDK tooling.
+Installer builds require Inno Setup 6. MSIX builds require Windows SDK tooling.
 
-## Documentation Rules
+## Working Style
 
-Keep documentation precise:
+- Inspect the code before rewriting docs or changing behavior.
+- Prefer the repository's existing patterns over new abstractions.
+- Keep edits tight to the feature being changed.
+- Use tests to lock in routing, format detection, and safety behavior.
+- Do not revert unrelated user changes.
+- Do not make claims in docs that the code does not support.
 
-- Do not claim Laplace is generally better than RAR without benchmarks.
-- Do not claim ZPAQ or BSC are built in; they are optional external-command adapters.
-- Do not claim `LZMA_MAX` is true LZMA until the compressor implementation changes.
-- Do not claim metadata encryption, recovery records, multi-volume LPC, solid LPC, or SFX are implemented until the reserved paths are replaced with real behavior.
-- Keep LPC and non-LPC behavior separate.
-- Mention that incompressible LPC blocks fall back to `RAW`.
+## Release Notes
+
+GitHub Actions publishes release assets on tag pushes matching `v*`.
+
+Release artifacts are expected to include:
+
+- `LaplaceSetup.exe`
+- `Laplace_<version>_win-x64.msix`
+- `SHA256SUMS.txt`

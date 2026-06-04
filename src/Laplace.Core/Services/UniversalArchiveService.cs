@@ -33,7 +33,13 @@ public sealed class UniversalArchiveService
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        switch (ArchiveFormatDetector.DetectWriteKind(outputArchivePath))
+        var writeKind = ArchiveFormatDetector.DetectWriteKind(outputArchivePath);
+        if (options.Password?.HasKeyfile == true && writeKind != SupportedArchiveKind.Lpc)
+        {
+            throw new NotSupportedException("Keyfiles are supported for LPC archives only.");
+        }
+
+        switch (writeKind)
         {
             case SupportedArchiveKind.Lpc:
                 await _lpcWriter.CreateAsync(inputPaths, outputArchivePath, options, progress, cancellationToken).ConfigureAwait(false);
@@ -120,14 +126,16 @@ public sealed class UniversalArchiveService
     private IReadOnlyList<ArchiveEntryListing> ListLpc(string archivePath)
     {
         var archive = _lpcReader.Read(archivePath);
-        var blockLookup = ArchiveReader.BuildBlockLookup(archive);
         return archive.FileEntries
             .OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase)
             .Select(entry =>
             {
                 var method = "-";
-                if (!entry.IsDirectory && blockLookup.TryGetValue(entry.EntryId, out var blocks))
+                if (!entry.IsDirectory && entry.BlockCount > 0 && entry.FirstBlockIndex >= 0)
                 {
+                    var blocks = archive.BlockEntries
+                        .Skip((int)entry.FirstBlockIndex)
+                        .Take(entry.BlockCount);
                     method = string.Join(",", blocks.Select(b => b.CompressionMethod.ToString()).Distinct());
                 }
 

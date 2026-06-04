@@ -14,6 +14,7 @@ public sealed class FileEntryRecord
     public int FileAttributes { get; set; }
     public bool IsDirectory { get; set; }
     public bool IsSymlink { get; set; }
+    public long DataStreamOffset { get; set; } = -1;
     public long FirstBlockIndex { get; set; } = -1;
     public int BlockCount { get; set; }
     public string CompressionSummary { get; set; } = string.Empty;

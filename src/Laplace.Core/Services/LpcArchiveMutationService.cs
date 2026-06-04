@@ -315,6 +315,7 @@ public sealed class LpcArchiveMutationService
                 {
                     Mode = options.Mode,
                     BlockSizeBytes = options.BlockSizeBytes ?? Math.Max(4 * 1024 * 1024, (int)archive.Header.DefaultBlockSize),
+                    SolidMode = archive.Header.IsSolid ? Enums.SolidMode.On : Enums.SolidMode.Off,
                     Password = archive.Header.IsEncrypted ? options.Password : null,
                     Comment = newComment ?? archive.Header.Comment,
                     LockArchive = forceLock || archive.Header.IsLocked

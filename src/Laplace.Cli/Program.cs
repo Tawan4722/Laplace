@@ -6,11 +6,21 @@ using Laplace.Core.Models;
 using Laplace.Core.Services;
 using Laplace.ShellIntegration;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Laplace.Cli;
 
 internal static class Program
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
     [STAThread]
     public static async Task<int> Main(string[] args)
     {
@@ -54,11 +64,14 @@ internal static class Program
                 "test" => await TestAsync(archives, remaining).ConfigureAwait(false),
                 "add" => await AddAsync(mutator, rarTools, remaining).ConfigureAwait(false),
                 "freshen" => await FreshenAsync(mutator, rarTools, remaining).ConfigureAwait(false),
-                "delete" => await DeleteAsync(mutator, rarTools, remaining).ConfigureAwait(false),
+                "delete" => await DeleteAsync(mutator, archives, rarTools, remaining).ConfigureAwait(false),
                 "rename" => await RenameAsync(mutator, remaining).ConfigureAwait(false),
                 "comment" => await CommentAsync(mutator, rarTools, remaining).ConfigureAwait(false),
                 "lock" => await LockAsync(mutator, rarTools, remaining).ConfigureAwait(false),
                 "find" => await FindAsync(mutator, archives, remaining).ConfigureAwait(false),
+                "diff" => await DiffAsync(archives, reader, remaining).ConfigureAwait(false),
+                "merge" => await MergeAsync(archives, remaining).ConfigureAwait(false),
+                "split" => await SplitAsync(archives, remaining).ConfigureAwait(false),
                 "view" => await ViewAsync(mutator, remaining).ConfigureAwait(false),
                 "repair" => await RepairAsync(rarTools, remaining).ConfigureAwait(false),
                 "benchmark" => await BenchmarkAsync(writer, extractor, reader, remaining).ConfigureAwait(false),
@@ -87,6 +100,7 @@ internal static class Program
 
     private static async Task<int> CompressAsync(UniversalArchiveService archives, string[] args)
     {
+        var fromFileInputs = ReadFromFileValues(args);
         var positional = new List<string>();
         var optionStart = args.Length;
         for (var i = 0; i < args.Length; i++)
@@ -100,15 +114,38 @@ internal static class Program
             positional.Add(args[i]);
         }
 
-        if (positional.Count == 0)
+        if (positional.Count == 0 && fromFileInputs.Count == 0)
         {
-            Console.Error.WriteLine("Usage: laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [options] [--encrypt|--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [options] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
         string outputPath;
         string[] inputPaths;
-        if (positional.Count == 1)
+        if (positional.Count == 0)
+        {
+            if (fromFileInputs.Count != 1)
+            {
+                Console.Error.WriteLine("Multiple input paths require an explicit output archive path ending in .lpc, .zip, .7z, or .rar.");
+                return 1;
+            }
+
+            var inputPath = Path.GetFullPath(fromFileInputs[0]);
+            if (!File.Exists(inputPath) && !Directory.Exists(inputPath))
+            {
+                Console.Error.WriteLine($"Input path not found: {inputPath}");
+                return 1;
+            }
+
+            inputPaths = [inputPath];
+            outputPath = ArchivePathHelper.ResolveBesideArchivePath(inputPath);
+        }
+        else if (fromFileInputs.Count > 0 && positional.Count == 1 && LooksLikeWriteArchivePath(positional[0]))
+        {
+            outputPath = positional[0];
+            inputPaths = fromFileInputs.ToArray();
+        }
+        else if (positional.Count == 1)
         {
             var inputPath = Path.GetFullPath(positional[0]);
             if (!File.Exists(inputPath) && !Directory.Exists(inputPath))
@@ -135,9 +172,32 @@ internal static class Program
             }
         }
 
+        inputPaths = inputPaths
+            .Concat(fromFileInputs)
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var inputPath in inputPaths)
+        {
+            if (!File.Exists(inputPath) && !Directory.Exists(inputPath))
+            {
+                Console.Error.WriteLine($"Input path not found: {inputPath}");
+                return 1;
+            }
+        }
+
+        if (positional.Count == 1 && fromFileInputs.Count > 0 && !LooksLikeWriteArchivePath(positional[0]) && inputPaths.Length > 1)
+        {
+            Console.Error.WriteLine("Multiple input paths require an explicit output archive path ending in .lpc, .zip, .7z, or .rar.");
+            return 1;
+        }
+
         var optionArgs = args.Skip(optionStart).ToArray();
         var options = ParseCreateOptions(optionArgs);
         var quiet = IsQuiet(optionArgs);
+        var json = IsJson(optionArgs);
+        var dryRun = IsDryRun(optionArgs);
         var passwordOptions = ParsePasswordOptions(optionArgs);
         if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
         {
@@ -149,20 +209,62 @@ internal static class Program
         }
 
         var originalSize = GetInputSize(inputPaths);
-        var stopwatch = Stopwatch.StartNew();
-        Console.WriteLine($"Compressing {inputPaths.Length} input path(s) -> '{outputPath}'");
+        if (dryRun)
+        {
+            WriteCommandResult(
+                json,
+                "Compression dry run completed.",
+                new
+                {
+                    command = "compress",
+                    dryRun = true,
+                    inputPaths,
+                    outputPath,
+                    originalSize,
+                    options = DescribeCreateOptions(options)
+                });
+            return 0;
+        }
 
-        await archives.CompressAsync(inputPaths, outputPath, options, quiet ? null : ProgressToConsole()).ConfigureAwait(false);
+        var stopwatch = Stopwatch.StartNew();
+        if (!json)
+        {
+            Console.WriteLine($"Compressing {inputPaths.Length} input path(s) -> '{outputPath}'");
+        }
+
+        await archives.CompressAsync(inputPaths, outputPath, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
-        Console.WriteLine();
-        Console.WriteLine("Compression completed.");
-        PrintSizeStats(originalSize, new FileInfo(outputPath).Length, stopwatch.Elapsed);
+        var compressedSize = new FileInfo(outputPath).Length;
+        if (json)
+        {
+            WriteJson(new
+            {
+                command = "compress",
+                dryRun = false,
+                inputPaths,
+                outputPath,
+                originalSize,
+                compressedSize,
+                ratio = originalSize == 0 ? 1 : (double)compressedSize / originalSize,
+                elapsedSeconds = stopwatch.Elapsed.TotalSeconds,
+                options = DescribeCreateOptions(options)
+            });
+        }
+        else
+        {
+            Console.WriteLine();
+            Console.WriteLine("Compression completed.");
+            PrintSizeStats(originalSize, compressedSize, stopwatch.Elapsed);
+        }
 
         if (options.VerifyAfterCompression)
         {
             var testResult = await archives.TestAsync(outputPath, options.Password).ConfigureAwait(false);
-            Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
+            if (!json)
+            {
+                Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
+            }
         }
 
         return 0;
@@ -172,7 +274,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace compress-beside <input_path> [options] [--encrypt|--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace compress-beside <input_path> [options] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -187,6 +289,8 @@ internal static class Program
         var outputPath = ArchivePathHelper.ResolveBesideArchivePath(inputPath);
         var options = ParseCreateOptions(optionArgs);
         var quiet = IsQuiet(optionArgs);
+        var json = IsJson(optionArgs);
+        var dryRun = IsDryRun(optionArgs);
         var passwordOptions = ParsePasswordOptions(optionArgs);
         if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
         {
@@ -196,22 +300,65 @@ internal static class Program
                 requirePassword: true,
                 confirmInteractivePassword: passwordOptions.EncryptRequested && !passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         }
+        ValidatePasswordContextForArchiveWrite(outputPath, options.Password);
 
         var originalSize = GetInputSize([inputPath]);
-        var stopwatch = Stopwatch.StartNew();
-        Console.WriteLine($"Compressing '{inputPath}' -> '{outputPath}'");
+        if (dryRun)
+        {
+            WriteCommandResult(
+                json,
+                "Compression dry run completed.",
+                new
+                {
+                    command = "compress-beside",
+                    dryRun = true,
+                    inputPaths = new[] { inputPath },
+                    outputPath,
+                    originalSize,
+                    options = DescribeCreateOptions(options)
+                });
+            return 0;
+        }
 
-        await archives.CompressAsync([inputPath], outputPath, options, quiet ? null : ProgressToConsole()).ConfigureAwait(false);
+        var stopwatch = Stopwatch.StartNew();
+        if (!json)
+        {
+            Console.WriteLine($"Compressing '{inputPath}' -> '{outputPath}'");
+        }
+
+        await archives.CompressAsync([inputPath], outputPath, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
-        Console.WriteLine();
-        Console.WriteLine("Compression completed.");
-        PrintSizeStats(originalSize, new FileInfo(outputPath).Length, stopwatch.Elapsed);
+        var compressedSize = new FileInfo(outputPath).Length;
+        if (json)
+        {
+            WriteJson(new
+            {
+                command = "compress-beside",
+                dryRun = false,
+                inputPaths = new[] { inputPath },
+                outputPath,
+                originalSize,
+                compressedSize,
+                ratio = originalSize == 0 ? 1 : (double)compressedSize / originalSize,
+                elapsedSeconds = stopwatch.Elapsed.TotalSeconds,
+                options = DescribeCreateOptions(options)
+            });
+        }
+        else
+        {
+            Console.WriteLine();
+            Console.WriteLine("Compression completed.");
+            PrintSizeStats(originalSize, compressedSize, stopwatch.Elapsed);
+        }
 
         if (options.VerifyAfterCompression)
         {
             var testResult = await archives.TestAsync(outputPath, options.Password).ConfigureAwait(false);
-            Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
+            if (!json)
+            {
+                Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
+            }
         }
 
         return 0;
@@ -240,9 +387,27 @@ internal static class Program
 
         var optionArgs = args.Skip(optionStart).ToArray();
         var options = ParseCreateOptions(optionArgs);
-        Console.WriteLine($"Estimating {positional.Count} input path(s)...");
+        var json = IsJson(optionArgs);
+        if (!json)
+        {
+            Console.WriteLine($"Estimating {positional.Count} input path(s)...");
+        }
+
         var estimate = await archives.EstimateAsync(positional, options).ConfigureAwait(false);
-        PrintArchiveEstimate(estimate);
+        if (json)
+        {
+            WriteJson(new
+            {
+                command = "estimate",
+                inputPaths = positional,
+                estimate
+            });
+        }
+        else
+        {
+            PrintArchiveEstimate(estimate);
+        }
+
         return 0;
     }
 
@@ -250,7 +415,7 @@ internal static class Program
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace extract <input_archive> <output_folder> [--overwrite] [--verify|--no-verify] [--quiet] [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace extract <input_archive> <output_folder> [--overwrite] [--verify|--no-verify] [--quiet] [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -259,13 +424,40 @@ internal static class Program
         var overwrite = args.Any(x => x.Equals("--overwrite", StringComparison.OrdinalIgnoreCase));
         var verifyChecksums = ParseVerifyChecksums(args);
         var quiet = IsQuiet(args);
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        var namePatterns = ReadPatternValues(args, "--name");
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(
             passwordOptions,
             new PasswordRequest(inputArchive, "Extract archive", IsWrite: false),
             requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(inputArchive, password);
+        var selectedEntryIds = await ResolveSelectedEntryIdsAsync(archives, inputArchive, passwordOptions, password, namePatterns).ConfigureAwait(false);
+        if (dryRun)
+        {
+            WriteCommandResult(
+                json,
+                "Extraction dry run completed.",
+                new
+                {
+                    command = "extract",
+                    dryRun = true,
+                    inputArchive,
+                    outputFolder,
+                    namePatterns,
+                    selectedEntryCount = selectedEntryIds?.Count,
+                    overwrite,
+                    verifyChecksums
+                });
+            return 0;
+        }
+
         var stopwatch = Stopwatch.StartNew();
-        Console.WriteLine($"Extracting '{inputArchive}' -> '{outputFolder}'");
+        if (!json)
+        {
+            Console.WriteLine($"Extracting '{inputArchive}' -> '{outputFolder}'");
+        }
 
         await RunWithPasswordRetryAsync(
             inputArchive,
@@ -279,13 +471,33 @@ internal static class Program
                 {
                     Overwrite = overwrite,
                     VerifyChecksums = verifyChecksums,
+                    SelectedEntryIds = resolvedPassword == password ? selectedEntryIds : await ResolveSelectedEntryIdsAsync(archives, inputArchive, passwordOptions, resolvedPassword, namePatterns).ConfigureAwait(false),
                     Password = resolvedPassword
                 },
-                quiet ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
+                quiet || json ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
 
         stopwatch.Stop();
-        Console.WriteLine();
-        Console.WriteLine($"Extraction completed in {stopwatch.Elapsed.TotalSeconds:F2}s.");
+        if (json)
+        {
+            WriteJson(new
+            {
+                command = "extract",
+                dryRun = false,
+                inputArchive,
+                outputFolder,
+                namePatterns,
+                selectedEntryCount = selectedEntryIds?.Count,
+                overwrite,
+                verifyChecksums,
+                elapsedSeconds = stopwatch.Elapsed.TotalSeconds
+            });
+        }
+        else
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Extraction completed in {stopwatch.Elapsed.TotalSeconds:F2}s.");
+        }
+
         return 0;
     }
 
@@ -293,30 +505,44 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace list <input_archive> [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace list <input_archive> [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
         var inputArchive = args[0];
+        var json = IsJson(args);
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(
             passwordOptions,
             new PasswordRequest(inputArchive, "List archive", IsWrite: false),
             requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(inputArchive, password);
 
         var entries = await RunWithPasswordRetryAsync(
             inputArchive,
             "List archive",
             passwordOptions,
             password,
-            resolvedPassword => Task.FromResult(archives.List(inputArchive, resolvedPassword))).ConfigureAwait(false);
+                resolvedPassword => Task.FromResult(archives.List(inputArchive, resolvedPassword))).ConfigureAwait(false);
 
-        Console.WriteLine($"Archive: {inputArchive}");
-        Console.WriteLine("ID\tType\tOriginal\tCompressed\tMethod\tEncrypted\tPath");
-        foreach (var entry in entries)
+        if (json)
         {
-            var type = entry.IsDirectory ? "DIR" : "FILE";
-            Console.WriteLine($"{entry.Id}\t{type}\t{entry.OriginalSize}\t{entry.CompressedSize}\t{entry.Method}\t{entry.IsEncrypted}\t{entry.Path}");
+            WriteJson(new
+            {
+                command = "list",
+                archive = inputArchive,
+                entries
+            });
+        }
+        else
+        {
+            Console.WriteLine($"Archive: {inputArchive}");
+            Console.WriteLine("ID\tType\tOriginal\tCompressed\tMethod\tEncrypted\tPath");
+            foreach (var entry in entries)
+            {
+                var type = entry.IsDirectory ? "DIR" : "FILE";
+                Console.WriteLine($"{entry.Id}\t{type}\t{entry.OriginalSize}\t{entry.CompressedSize}\t{entry.Method}\t{entry.IsEncrypted}\t{entry.Path}");
+            }
         }
 
         return 0;
@@ -326,25 +552,40 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace info <input_archive> [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace info <input_archive> [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
         var inputArchive = args[0];
+        var json = IsJson(args);
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(
             passwordOptions,
             new PasswordRequest(inputArchive, "Read archive info", IsWrite: false),
             requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(inputArchive, password);
 
         var info = await RunWithPasswordRetryAsync(
             inputArchive,
             "Read archive info",
             passwordOptions,
             password,
-            resolvedPassword => Task.FromResult(archives.Info(inputArchive, resolvedPassword))).ConfigureAwait(false);
+                resolvedPassword => Task.FromResult(archives.Info(inputArchive, resolvedPassword))).ConfigureAwait(false);
 
-        PrintArchiveSummary(inputArchive, info);
+        if (json)
+        {
+            WriteJson(new
+            {
+                command = "info",
+                archive = inputArchive,
+                info
+            });
+        }
+        else
+        {
+            PrintArchiveSummary(inputArchive, info);
+        }
+
         return 0;
     }
 
@@ -352,18 +593,24 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace test <input_archive> [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace test <input_archive> [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
         var inputArchive = args[0];
+        var json = IsJson(args);
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(
             passwordOptions,
             new PasswordRequest(inputArchive, "Test archive", IsWrite: false),
             requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(inputArchive, password);
 
-        Console.WriteLine($"Testing archive: {inputArchive}");
+        if (!json)
+        {
+            Console.WriteLine($"Testing archive: {inputArchive}");
+        }
+
         var result = await RunWithPasswordRetryAsync(
             inputArchive,
             "Test archive",
@@ -380,24 +627,53 @@ internal static class Program
                 return testResult;
             }).ConfigureAwait(false);
 
-        Console.WriteLine();
+        if (json)
+        {
+            WriteJson(new
+            {
+                command = "test",
+                archive = inputArchive,
+                result
+            });
+        }
+        else
+        {
+            Console.WriteLine();
+        }
+
         if (result.Success)
         {
-            Console.WriteLine($"Integrity OK. Files: {result.FileCount}, Blocks: {result.BlockCount}");
+            if (!json)
+            {
+                Console.WriteLine($"Integrity OK. Files: {result.FileCount}, Blocks: {result.BlockCount}");
+            }
+
             return 0;
         }
 
-        Console.Error.WriteLine($"Integrity FAILED: {result.Message}");
+        if (!json)
+        {
+            Console.Error.WriteLine($"Integrity FAILED: {result.Message}");
+        }
+
         return 2;
     }
 
     private static async Task<int> AddAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
     {
         var (archivePath, inputs, options, passwordOptions) = await ParseMutationCommandAsync(args, "laplace add <archive> <input_path...> [options]").ConfigureAwait(false);
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        if (dryRun)
+        {
+            WriteCommandResult(json, "Add dry run completed.", DescribeMutation("add", archivePath, inputs, options, dryRun));
+            return 0;
+        }
+
         if (IsRarArchive(archivePath))
         {
             await rarTools.AddAsync(archivePath, inputs).ConfigureAwait(false);
-            Console.WriteLine("RAR archive updated.");
+            WriteCommandResult(json, "RAR archive updated.", DescribeMutation("add", archivePath, inputs, options, dryRun));
             return 0;
         }
 
@@ -412,17 +688,25 @@ internal static class Program
                 options.Password = password;
                 await mutator.AddAsync(archivePath, inputs, options).ConfigureAwait(false);
             }).ConfigureAwait(false);
-        Console.WriteLine("Archive updated.");
+        WriteCommandResult(json, "Archive updated.", DescribeMutation("add", archivePath, inputs, options, dryRun));
         return 0;
     }
 
     private static async Task<int> FreshenAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
     {
         var (archivePath, inputs, options, passwordOptions) = await ParseMutationCommandAsync(args, "laplace freshen <archive> <input_path...> [options]").ConfigureAwait(false);
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        if (dryRun)
+        {
+            WriteCommandResult(json, "Freshen dry run completed.", DescribeMutation("freshen", archivePath, inputs, options, dryRun));
+            return 0;
+        }
+
         if (IsRarArchive(archivePath))
         {
             await rarTools.FreshenAsync(archivePath, inputs).ConfigureAwait(false);
-            Console.WriteLine("RAR archive freshened.");
+            WriteCommandResult(json, "RAR archive freshened.", DescribeMutation("freshen", archivePath, inputs, options, dryRun));
             return 0;
         }
 
@@ -437,17 +721,29 @@ internal static class Program
                 options.Password = password;
                 await mutator.FreshenAsync(archivePath, inputs, options).ConfigureAwait(false);
             }).ConfigureAwait(false);
-        Console.WriteLine("Archive freshened.");
+        WriteCommandResult(json, "Archive freshened.", DescribeMutation("freshen", archivePath, inputs, options, dryRun));
         return 0;
     }
 
-    private static async Task<int> DeleteAsync(LpcArchiveMutationService mutator, RarToolCommandService rarTools, string[] args)
+    private static async Task<int> DeleteAsync(LpcArchiveMutationService mutator, UniversalArchiveService archives, RarToolCommandService rarTools, string[] args)
     {
-        var (archivePath, targets, options, passwordOptions) = await ParseMutationCommandAsync(args, "laplace delete <archive> <entry_path_or_id...> [options]").ConfigureAwait(false);
+        var (archivePath, rawTargets, options, passwordOptions) = await ParseMutationCommandAsync(args, "laplace delete <archive> <entry_path_or_id...> [options]").ConfigureAwait(false);
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        var password = options.Password;
+        var targets = IsLpcArchive(archivePath)
+            ? await ExpandDeleteTargetsAsync(archives, archivePath, rawTargets, passwordOptions, password).ConfigureAwait(false)
+            : rawTargets;
+        if (dryRun)
+        {
+            WriteCommandResult(json, "Delete dry run completed.", DescribeMutation("delete", archivePath, targets, options, dryRun));
+            return 0;
+        }
+
         if (IsRarArchive(archivePath))
         {
             await rarTools.DeleteAsync(archivePath, targets).ConfigureAwait(false);
-            Console.WriteLine("RAR entries deleted.");
+            WriteCommandResult(json, "RAR entries deleted.", DescribeMutation("delete", archivePath, targets, options, dryRun));
             return 0;
         }
 
@@ -462,7 +758,7 @@ internal static class Program
                 options.Password = password;
                 await mutator.DeleteAsync(archivePath, targets, options).ConfigureAwait(false);
             }).ConfigureAwait(false);
-        Console.WriteLine("Archive entries deleted.");
+        WriteCommandResult(json, "Archive entries deleted.", DescribeMutation("delete", archivePath, targets, options, dryRun));
         return 0;
     }
 
@@ -479,6 +775,25 @@ internal static class Program
         EnsureLpcArchive(archivePath);
         var passwordOptions = ParsePasswordOptions(args);
         var options = await ParseMutationOptionsAsync(archivePath, args, passwordOptions).ConfigureAwait(false);
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        if (dryRun)
+        {
+            WriteCommandResult(
+                json,
+                "Rename dry run completed.",
+                new
+                {
+                    command = "rename",
+                    dryRun = true,
+                    archivePath,
+                    target = positional[1],
+                    newEntryPath = positional[2],
+                    options = DescribeMutationOptions(options)
+                });
+            return 0;
+        }
+
         await RunWithPasswordRetryAsync(
             archivePath,
             "Rename archive entry",
@@ -489,7 +804,18 @@ internal static class Program
                 options.Password = password;
                 await mutator.RenameAsync(archivePath, positional[1], positional[2], options).ConfigureAwait(false);
             }).ConfigureAwait(false);
-        Console.WriteLine("Archive entry renamed.");
+        WriteCommandResult(
+            json,
+            "Archive entry renamed.",
+            new
+            {
+                command = "rename",
+                dryRun = false,
+                archivePath,
+                target = positional[1],
+                newEntryPath = positional[2],
+                options = DescribeMutationOptions(options)
+            });
         return 0;
     }
 
@@ -502,6 +828,8 @@ internal static class Program
         }
 
         var archivePath = args[0];
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
         var passwordOptions = ParsePasswordOptions(args);
         var options = await ParseMutationOptionsAsync(archivePath, args, passwordOptions).ConfigureAwait(false);
 
@@ -513,7 +841,22 @@ internal static class Program
                 return 1;
             }
 
-            Console.WriteLine(new ArchiveReader().ReadHeaderOnly(archivePath).Comment);
+            var existingComment = new ArchiveReader().ReadHeaderOnly(archivePath).Comment;
+            if (json)
+            {
+                WriteJson(new
+                {
+                    command = "comment",
+                    archivePath,
+                    action = "show",
+                    comment = existingComment
+                });
+            }
+            else
+            {
+                Console.WriteLine(existingComment);
+            }
+
             return 0;
         }
 
@@ -542,10 +885,38 @@ internal static class Program
             return 1;
         }
 
+        if (dryRun)
+        {
+            WriteCommandResult(
+                json,
+                "Comment dry run completed.",
+                new
+                {
+                    command = "comment",
+                    dryRun = true,
+                    archivePath,
+                    action = clear ? "clear" : "set",
+                    commentLength = comment.Length,
+                    options = DescribeMutationOptions(options)
+                });
+            return 0;
+        }
+
         if (IsRarArchive(archivePath))
         {
             await rarTools.SetCommentAsync(archivePath, comment).ConfigureAwait(false);
-            Console.WriteLine(clear ? "RAR archive comment cleared." : "RAR archive comment updated.");
+            WriteCommandResult(
+                json,
+                clear ? "RAR archive comment cleared." : "RAR archive comment updated.",
+                new
+                {
+                    command = "comment",
+                    dryRun = false,
+                    archivePath,
+                    action = clear ? "clear" : "set",
+                    commentLength = comment.Length,
+                    options = DescribeMutationOptions(options)
+                });
             return 0;
         }
 
@@ -567,7 +938,18 @@ internal static class Program
                     await mutator.SetCommentAsync(archivePath, comment, options).ConfigureAwait(false);
                 }
             }).ConfigureAwait(false);
-        Console.WriteLine(clear ? "Archive comment cleared." : "Archive comment updated.");
+        WriteCommandResult(
+            json,
+            clear ? "Archive comment cleared." : "Archive comment updated.",
+            new
+            {
+                command = "comment",
+                dryRun = false,
+                archivePath,
+                action = clear ? "clear" : "set",
+                commentLength = comment.Length,
+                options = DescribeMutationOptions(options)
+            });
         return 0;
     }
 
@@ -580,10 +962,18 @@ internal static class Program
         }
 
         var archivePath = args[0];
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        if (dryRun)
+        {
+            WriteCommandResult(json, "Lock dry run completed.", new { command = "lock", dryRun = true, archivePath });
+            return 0;
+        }
+
         if (IsRarArchive(archivePath))
         {
             await rarTools.LockAsync(archivePath).ConfigureAwait(false);
-            Console.WriteLine("RAR archive locked.");
+            WriteCommandResult(json, "RAR archive locked.", new { command = "lock", dryRun = false, archivePath });
             return 0;
         }
 
@@ -600,7 +990,7 @@ internal static class Program
                 options.Password = password;
                 await mutator.LockAsync(archivePath, options).ConfigureAwait(false);
             }).ConfigureAwait(false);
-        Console.WriteLine("Archive locked.");
+        WriteCommandResult(json, "Archive locked.", new { command = "lock", dryRun = false, archivePath, options = DescribeMutationOptions(options) });
         return 0;
     }
 
@@ -608,11 +998,12 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace find <archive> [--name <glob>] [--text <value>] [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace find <archive> [--name <glob>] [--text <value>] [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
         var archivePath = args[0];
+        var json = IsJson(args);
         var name = "*";
         string? text = null;
         for (var i = 1; i < args.Length; i++)
@@ -629,6 +1020,7 @@ internal static class Program
 
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Find archive entries", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(archivePath, password);
         if (!IsLpcArchive(archivePath))
         {
             if (!string.IsNullOrEmpty(text))
@@ -637,9 +1029,31 @@ internal static class Program
                 return 1;
             }
 
-            foreach (var entry in archives.List(archivePath, password).Where(x => MatchesSimpleGlob(x.Path, name)))
+            var entries = archives.List(archivePath, password).Where(x => MatchesSimpleGlob(x.Path, name)).ToArray();
+            if (json)
             {
-                Console.WriteLine($"{entry.Id}\t{(entry.IsDirectory ? "DIR" : "FILE")}\t{entry.Path}");
+                WriteJson(new
+                {
+                    command = "find",
+                    archive = archivePath,
+                    namePattern = name,
+                    text,
+                    results = entries.Select(entry => new ArchiveFindResult
+                    {
+                        Id = entry.Id,
+                        IsDirectory = entry.IsDirectory,
+                        Path = entry.Path,
+                        OriginalSize = entry.OriginalSize,
+                        NameMatched = true
+                    })
+                });
+            }
+            else
+            {
+                foreach (var entry in entries)
+                {
+                    Console.WriteLine($"{entry.Id}\t{(entry.IsDirectory ? "DIR" : "FILE")}\t{entry.Path}");
+                }
             }
 
             return 0;
@@ -656,12 +1070,381 @@ internal static class Program
                 Text = text,
                 Password = resolvedPassword
             }))).ConfigureAwait(false);
-        foreach (var result in results)
+        if (json)
         {
-            var matched = result.TextMatched ? "name/text" : "name";
-            Console.WriteLine($"{result.Id}\t{(result.IsDirectory ? "DIR" : "FILE")}\t{matched}\t{result.Path}");
+            WriteJson(new
+            {
+                command = "find",
+                archive = archivePath,
+                namePattern = name,
+                text,
+                results
+            });
+        }
+        else
+        {
+            foreach (var result in results)
+            {
+                var matched = result.TextMatched ? "name/text" : "name";
+                Console.WriteLine($"{result.Id}\t{(result.IsDirectory ? "DIR" : "FILE")}\t{matched}\t{result.Path}");
+            }
         }
 
+        return 0;
+    }
+
+    private static async Task<int> DiffAsync(UniversalArchiveService archives, ArchiveReader reader, string[] args)
+    {
+        if (args.Length < 2)
+        {
+            Console.Error.WriteLine("Usage: laplace diff <archive_a> <archive_b> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
+            return 1;
+        }
+
+        var leftPath = args[0];
+        var rightPath = args[1];
+        var json = IsJson(args);
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(leftPath, "Diff archives", IsWrite: false),
+            requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(leftPath, password);
+        ValidatePasswordContextForArchiveRead(rightPath, password);
+
+        var leftEntries = await RunWithPasswordRetryAsync(
+            leftPath,
+            "Diff archive",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(archives.List(leftPath, resolvedPassword))).ConfigureAwait(false);
+        var rightEntries = await RunWithPasswordRetryAsync(
+            rightPath,
+            "Diff archive",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(archives.List(rightPath, resolvedPassword))).ConfigureAwait(false);
+
+        var leftHashes = TryReadLpcChecksums(reader, leftPath);
+        var rightHashes = TryReadLpcChecksums(reader, rightPath);
+        var leftByPath = leftEntries.ToDictionary(x => NormalizeArchiveListingPath(x.Path), StringComparer.OrdinalIgnoreCase);
+        var rightByPath = rightEntries.ToDictionary(x => NormalizeArchiveListingPath(x.Path), StringComparer.OrdinalIgnoreCase);
+        var diff = new List<ArchiveDiffItem>();
+
+        foreach (var path in leftByPath.Keys.Union(rightByPath.Keys, StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+        {
+            var hasLeft = leftByPath.TryGetValue(path, out var left);
+            var hasRight = rightByPath.TryGetValue(path, out var right);
+            if (!hasLeft)
+            {
+                diff.Add(new ArchiveDiffItem(path, "added", right!.IsDirectory, null, right.OriginalSize, "present only in right archive"));
+                continue;
+            }
+
+            if (!hasRight)
+            {
+                diff.Add(new ArchiveDiffItem(path, "removed", left!.IsDirectory, left.OriginalSize, null, "present only in left archive"));
+                continue;
+            }
+
+            var leftEntry = left!;
+            var rightEntry = right!;
+            var reason = GetDiffReason(path, leftEntry, rightEntry, leftHashes, rightHashes);
+            if (reason is not null)
+            {
+                diff.Add(new ArchiveDiffItem(path, "changed", leftEntry.IsDirectory || rightEntry.IsDirectory, leftEntry.OriginalSize, rightEntry.OriginalSize, reason));
+            }
+        }
+
+        if (json)
+        {
+            WriteJson(new
+            {
+                command = "diff",
+                leftArchive = leftPath,
+                rightArchive = rightPath,
+                changes = diff,
+                summary = new
+                {
+                    added = diff.Count(x => x.Status == "added"),
+                    removed = diff.Count(x => x.Status == "removed"),
+                    changed = diff.Count(x => x.Status == "changed")
+                }
+            });
+        }
+        else
+        {
+            Console.WriteLine($"Diff: {leftPath}");
+            Console.WriteLine($"   vs {rightPath}");
+            foreach (var item in diff)
+            {
+                var prefix = item.Status switch
+                {
+                    "added" => "+",
+                    "removed" => "-",
+                    _ => "~"
+                };
+                Console.WriteLine($"{prefix} {item.Path} ({item.Reason})");
+            }
+
+            if (diff.Count == 0)
+            {
+                Console.WriteLine("No differences found.");
+            }
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> MergeAsync(UniversalArchiveService archives, string[] args)
+    {
+        var positional = GetPositionalArgs(args);
+        var sourceArchives = positional.Count > 1
+            ? positional.Skip(1).Concat(ReadFromFileValues(args)).ToArray()
+            : ReadFromFileValues(args).ToArray();
+        if (positional.Count < 2 && sourceArchives.Length == 0)
+        {
+            Console.Error.WriteLine("Usage: laplace merge <output_archive> <input_archive...> [--from-file <path>] [options]");
+            return 1;
+        }
+
+        var outputArchive = positional[0];
+        if (!LooksLikeWriteArchivePath(outputArchive))
+        {
+            Console.Error.WriteLine("Merge output path must end in .lpc, .zip, .7z, or .rar.");
+            return 1;
+        }
+
+        sourceArchives = sourceArchives.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (sourceArchives.Length == 0)
+        {
+            Console.Error.WriteLine("Merge requires at least one source archive.");
+            return 1;
+        }
+
+        foreach (var archive in sourceArchives)
+        {
+            if (!File.Exists(archive))
+            {
+                Console.Error.WriteLine($"Source archive not found: {archive}");
+                return 1;
+            }
+        }
+
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        var quiet = IsQuiet(args);
+        var options = ParseCreateOptions(args);
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(outputArchive, "Merge archives", IsWrite: true),
+            requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        if (passwordOptions.EncryptRequested || passwordOptions.HasExplicitSecret)
+        {
+            options.Password = password;
+        }
+        ValidatePasswordContextForArchiveWrite(outputArchive, options.Password);
+
+        if (dryRun)
+        {
+            WriteCommandResult(
+                json,
+                "Merge dry run completed.",
+                new
+                {
+                    command = "merge",
+                    dryRun = true,
+                    outputArchive,
+                    sourceArchives,
+                    options = DescribeCreateOptions(options)
+                });
+            return 0;
+        }
+
+        var workspace = CreateTempDirectory("laplace-merge");
+        try
+        {
+            foreach (var archive in sourceArchives)
+            {
+                await RunWithPasswordRetryAsync(
+                    archive,
+                    "Merge archive",
+                    passwordOptions,
+                    password,
+                    async activePassword => await archives.ExtractAsync(
+                        archive,
+                        workspace,
+                        new ExtractArchiveOptions
+                        {
+                            Overwrite = true,
+                            VerifyChecksums = true,
+                            Password = activePassword
+                        },
+                        quiet || json ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
+            }
+
+            var inputs = Directory.EnumerateFileSystemEntries(workspace).ToArray();
+            if (inputs.Length == 0)
+            {
+                throw new InvalidOperationException("Merged archive would be empty.");
+            }
+
+            await archives.CompressAsync(inputs, outputArchive, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
+            WriteCommandResult(
+                json,
+                "Archive merge completed.",
+                new
+                {
+                    command = "merge",
+                    dryRun = false,
+                    outputArchive,
+                    sourceArchives,
+                    options = DescribeCreateOptions(options)
+                });
+            return 0;
+        }
+        finally
+        {
+            TryDeleteDirectory(workspace);
+        }
+    }
+
+    private static async Task<int> SplitAsync(UniversalArchiveService archives, string[] args)
+    {
+        if (args.Length < 3)
+        {
+            Console.Error.WriteLine("Usage: laplace split <archive> <output_prefix> (--size 700M|--count 100) [--json] [--dry-run] [options]");
+            return 1;
+        }
+
+        var archivePath = args[0];
+        var outputPrefix = args[1];
+        var sizeText = GetSingleOptionValue(args, "--size");
+        var countText = GetSingleOptionValue(args, "--count");
+        if (string.IsNullOrWhiteSpace(sizeText) == string.IsNullOrWhiteSpace(countText))
+        {
+            Console.Error.WriteLine("Split requires exactly one of --size or --count.");
+            return 1;
+        }
+
+        var json = IsJson(args);
+        var dryRun = IsDryRun(args);
+        var quiet = IsQuiet(args);
+        var options = ParseCreateOptions(args);
+        var maxBytes = sizeText is null ? (long?)null : ParseSize(sizeText);
+        var maxCount = countText is null ? (int?)null : int.Parse(countText);
+        if (maxBytes is <= 0)
+        {
+            Console.Error.WriteLine("Split size must be greater than zero.");
+            return 1;
+        }
+
+        if (maxCount is <= 0)
+        {
+            Console.Error.WriteLine("Split count must be greater than zero.");
+            return 1;
+        }
+
+        var passwordOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(
+            passwordOptions,
+            new PasswordRequest(archivePath, "Split archive", IsWrite: false),
+            requirePassword: passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(archivePath, password);
+        var entries = await RunWithPasswordRetryAsync(
+            archivePath,
+            "Split archive",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(archives.List(archivePath, resolvedPassword))).ConfigureAwait(false);
+        var files = entries.Where(x => !x.IsDirectory).OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase).ToList();
+        if (files.Count == 0)
+        {
+            Console.Error.WriteLine("Archive contains no files to split.");
+            return 1;
+        }
+
+        var parts = BuildSplitPlan(files, maxBytes, maxCount);
+        if (dryRun)
+        {
+            WriteCommandResult(
+                json,
+                "Split dry run completed.",
+                new
+                {
+                    command = "split",
+                    dryRun = true,
+                    archivePath,
+                    outputPrefix,
+                    partCount = parts.Count,
+                    parts = parts.Select((part, index) => new
+                    {
+                        index = index + 1,
+                        fileCount = part.Count,
+                        originalSize = part.Sum(x => x.OriginalSize)
+                    })
+                });
+            return 0;
+        }
+
+        var partOutputs = new List<SplitOutputPart>();
+        var directoryEntries = entries.Where(x => x.IsDirectory).ToArray();
+        for (var i = 0; i < parts.Count; i++)
+        {
+            var part = parts[i];
+            var outputArchive = BuildSplitOutputPath(outputPrefix, i + 1, Path.GetExtension(archivePath));
+            var workspace = CreateTempDirectory("laplace-split");
+            try
+            {
+                var selectedIds = new HashSet<long>(part.Select(x => x.Id));
+                if (i == 0)
+                {
+                    foreach (var directoryEntry in directoryEntries.Where(x => !HasDescendantFile(x.Path, files)))
+                    {
+                        selectedIds.Add(directoryEntry.Id);
+                    }
+                }
+
+                await RunWithPasswordRetryAsync(
+                    archivePath,
+                    "Split archive",
+                    passwordOptions,
+                    password,
+                    async resolvedPassword => await archives.ExtractAsync(
+                        archivePath,
+                        workspace,
+                        new ExtractArchiveOptions
+                        {
+                            Overwrite = true,
+                            VerifyChecksums = true,
+                            SelectedEntryIds = selectedIds,
+                            Password = resolvedPassword
+                        },
+                        quiet || json ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
+
+                var inputs = Directory.EnumerateFileSystemEntries(workspace).ToArray();
+                await archives.CompressAsync(inputs, outputArchive, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
+                partOutputs.Add(new SplitOutputPart(outputArchive, part.Count, part.Sum(x => x.OriginalSize)));
+            }
+            finally
+            {
+                TryDeleteDirectory(workspace);
+            }
+        }
+
+        WriteCommandResult(
+            json,
+            "Archive split completed.",
+            new
+            {
+                command = "split",
+                dryRun = false,
+                archivePath,
+                outputPrefix,
+                partCount = partOutputs.Count,
+                parts = partOutputs
+            });
         return 0;
     }
 
@@ -669,7 +1452,7 @@ internal static class Program
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace view <archive.lpc> <entry_path_or_id> [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace view <archive.lpc> <entry_path_or_id> [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -677,6 +1460,7 @@ internal static class Program
         EnsureLpcArchive(archivePath);
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "View archive entry", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(archivePath, password);
         var bytes = await RunWithPasswordRetryAsync(
             archivePath,
             "View archive entry",
@@ -715,6 +1499,7 @@ internal static class Program
         }
 
         var sourcePath = args[0];
+        var json = IsJson(args);
         var archivePath = Path.Combine(Path.GetTempPath(), $"laplace-bench-{Guid.NewGuid():N}.lpc");
         var extractPath = Path.Combine(Path.GetTempPath(), $"laplace-bench-out-{Guid.NewGuid():N}");
         Directory.CreateDirectory(extractPath);
@@ -742,19 +1527,39 @@ internal static class Program
             var archiveRead = reader.Read(archivePath);
             var rawBlocks = archiveRead.BlockEntries.Count(b => b.IsRaw || b.CompressionMethod == CompressionMethod.Raw);
             var compressedBlocks = archiveRead.BlockEntries.Count - rawBlocks;
-            Console.WriteLine("Benchmark:");
-            Console.WriteLine($"Source: {sourcePath}");
-            Console.WriteLine($"Original size: {info.OriginalSize} bytes");
-            Console.WriteLine($"Compressed size: {info.CompressedSize} bytes");
-            Console.WriteLine($"Ratio: {info.Ratio:P2}");
-            Console.WriteLine($"Space saved: {(info.OriginalSize - info.CompressedSize)} bytes");
-            Console.WriteLine($"Compression time: {compressWatch.Elapsed.TotalSeconds:F2}s");
-            Console.WriteLine($"Decompression time: {extractWatch.Elapsed.TotalSeconds:F2}s");
-            Console.WriteLine($"Compression speed: {FormatSpeed(info.OriginalSize, compressWatch.Elapsed)}");
-            Console.WriteLine($"Decompression speed: {FormatSpeed(info.OriginalSize, extractWatch.Elapsed)}");
-            Console.WriteLine($"Methods: {string.Join(", ", info.MethodsUsed)}");
-            Console.WriteLine($"RAW blocks: {rawBlocks}");
-            Console.WriteLine($"Compressed blocks: {compressedBlocks}");
+            if (json)
+            {
+                WriteJson(new
+                {
+                    command = "benchmark",
+                    source = sourcePath,
+                    originalSize = info.OriginalSize,
+                    compressedSize = info.CompressedSize,
+                    ratio = info.Ratio,
+                    spaceSaved = info.OriginalSize - info.CompressedSize,
+                    compressionSeconds = compressWatch.Elapsed.TotalSeconds,
+                    decompressionSeconds = extractWatch.Elapsed.TotalSeconds,
+                    methods = info.MethodsUsed,
+                    rawBlocks,
+                    compressedBlocks
+                });
+            }
+            else
+            {
+                Console.WriteLine("Benchmark:");
+                Console.WriteLine($"Source: {sourcePath}");
+                Console.WriteLine($"Original size: {info.OriginalSize} bytes");
+                Console.WriteLine($"Compressed size: {info.CompressedSize} bytes");
+                Console.WriteLine($"Ratio: {info.Ratio:P2}");
+                Console.WriteLine($"Space saved: {(info.OriginalSize - info.CompressedSize)} bytes");
+                Console.WriteLine($"Compression time: {compressWatch.Elapsed.TotalSeconds:F2}s");
+                Console.WriteLine($"Decompression time: {extractWatch.Elapsed.TotalSeconds:F2}s");
+                Console.WriteLine($"Compression speed: {FormatSpeed(info.OriginalSize, compressWatch.Elapsed)}");
+                Console.WriteLine($"Decompression speed: {FormatSpeed(info.OriginalSize, extractWatch.Elapsed)}");
+                Console.WriteLine($"Methods: {string.Join(", ", info.MethodsUsed)}");
+                Console.WriteLine($"RAW blocks: {rawBlocks}");
+                Console.WriteLine($"Compressed blocks: {compressedBlocks}");
+            }
 
             return 0;
         }
@@ -835,12 +1640,314 @@ internal static class Program
         return args.Any(x => x.Equals("--quiet", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static bool IsJson(string[] args)
+    {
+        return args.Any(x => x.Equals("--json", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsDryRun(string[] args)
+    {
+        return args.Any(x => x.Equals("--dry-run", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void WriteCommandResult(bool json, string message, object payload)
+    {
+        if (json)
+        {
+            WriteJson(payload);
+        }
+        else
+        {
+            Console.WriteLine(message);
+        }
+    }
+
+    private static void WriteJson(object payload)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(payload, JsonOptions));
+    }
+
+    private static object DescribeCreateOptions(CreateArchiveOptions options)
+    {
+        return new
+        {
+            mode = options.Mode.ToString(),
+            blockSizeBytes = options.BlockSizeBytes,
+            solidMode = options.SolidMode.ToString(),
+            verifyAfterCompression = options.VerifyAfterCompression,
+            threads = options.Threads,
+            encryptMetadata = options.EncryptMetadata,
+            volumeSizeBytes = options.VolumeSizeBytes,
+            recoveryPercent = options.RecoveryPercent,
+            encrypted = options.Password is not null,
+            lockArchive = options.LockArchive
+        };
+    }
+
+    private static object DescribeMutation(string command, string archivePath, string[] operands, MutateArchiveOptions options, bool dryRun)
+    {
+        return new
+        {
+            command,
+            dryRun,
+            archivePath,
+            operands,
+            options = DescribeMutationOptions(options)
+        };
+    }
+
+    private static object DescribeMutationOptions(MutateArchiveOptions options)
+    {
+        return new
+        {
+            mode = options.Mode.ToString(),
+            blockSizeBytes = options.BlockSizeBytes,
+            overwrite = options.Overwrite,
+            verifyAfterRewrite = options.VerifyAfterRewrite,
+            encrypted = options.Password is not null
+        };
+    }
+
+    private static List<string> ReadFromFileValues(string[] args)
+    {
+        var values = new List<string>();
+        foreach (var path in ReadOptionValues(args, "--from-file"))
+        {
+            foreach (var line in File.ReadAllLines(path))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0)
+                {
+                    continue;
+                }
+
+                values.Add(trimmed);
+            }
+        }
+
+        return values;
+    }
+
+    private static string[] ReadPatternValues(string[] args, string optionName)
+    {
+        return ReadOptionValues(args, optionName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string? GetSingleOptionValue(string[] args, string optionName)
+    {
+        return ReadOptionValues(args, optionName).LastOrDefault();
+    }
+
+    private static IEnumerable<string> ReadOptionValues(string[] args, string optionName)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i].Equals(optionName, StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                yield return args[++i];
+            }
+        }
+    }
+
+    private static bool LooksLikeWriteArchivePath(string path)
+    {
+        return IsSupportedWriteExtension(Path.GetExtension(path));
+    }
+
+    private static async Task<HashSet<long>?> ResolveSelectedEntryIdsAsync(
+        UniversalArchiveService archives,
+        string archivePath,
+        ParsedPasswordOptions passwordOptions,
+        PasswordContext? password,
+        string[] namePatterns)
+    {
+        if (namePatterns.Length == 0)
+        {
+            return null;
+        }
+
+        var entries = await RunWithPasswordRetryAsync(
+            archivePath,
+            "List archive",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(archives.List(archivePath, resolvedPassword))).ConfigureAwait(false);
+        var matches = entries
+            .Where(entry => namePatterns.Any(pattern => MatchesSimpleGlob(entry.Path, pattern)))
+            .Select(entry => entry.Id)
+            .ToHashSet();
+        if (matches.Count == 0)
+        {
+            throw new InvalidOperationException($"No archive entries matched: {string.Join(", ", namePatterns)}");
+        }
+
+        return matches;
+    }
+
+    private static async Task<string[]> ExpandDeleteTargetsAsync(
+        UniversalArchiveService archives,
+        string archivePath,
+        string[] targets,
+        ParsedPasswordOptions passwordOptions,
+        PasswordContext? password)
+    {
+        if (!targets.Any(ContainsGlob))
+        {
+            return targets;
+        }
+
+        var entries = await RunWithPasswordRetryAsync(
+            archivePath,
+            "List archive",
+            passwordOptions,
+            password,
+            resolvedPassword => Task.FromResult(archives.List(archivePath, resolvedPassword))).ConfigureAwait(false);
+        var resolved = new List<string>();
+        foreach (var target in targets)
+        {
+            if (!ContainsGlob(target))
+            {
+                resolved.Add(target);
+                continue;
+            }
+
+            var matches = entries
+                .Where(entry => MatchesSimpleGlob(entry.Path, target))
+                .Select(entry => entry.Path)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (matches.Length == 0)
+            {
+                throw new InvalidOperationException($"No archive entries matched: {target}");
+            }
+
+            resolved.AddRange(matches);
+        }
+
+        return resolved.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static bool ContainsGlob(string value)
+    {
+        return value.Contains('*') || value.Contains('?');
+    }
+
+    private static string NormalizeArchiveListingPath(string path)
+    {
+        return path.Replace('\\', '/').TrimStart('/');
+    }
+
+    private static Dictionary<string, string>? TryReadLpcChecksums(ArchiveReader reader, string archivePath)
+    {
+        if (!IsLpcArchive(archivePath))
+        {
+            return null;
+        }
+
+        var archive = reader.Read(archivePath);
+        return archive.FileEntries
+            .Where(x => !x.IsDirectory && x.FileChecksum.Length > 0)
+            .ToDictionary(
+                x => NormalizeArchiveListingPath(x.RelativePath),
+                x => Convert.ToHexString(x.FileChecksum),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? GetDiffReason(
+        string path,
+        ArchiveEntryListing left,
+        ArchiveEntryListing right,
+        Dictionary<string, string>? leftHashes,
+        Dictionary<string, string>? rightHashes)
+    {
+        if (left.IsDirectory != right.IsDirectory)
+        {
+            return "type differs";
+        }
+
+        if (left.OriginalSize != right.OriginalSize)
+        {
+            return "size differs";
+        }
+
+        if (leftHashes is not null &&
+            rightHashes is not null &&
+            leftHashes.TryGetValue(path, out var leftHash) &&
+            rightHashes.TryGetValue(path, out var rightHash) &&
+            !string.Equals(leftHash, rightHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return "checksum differs";
+        }
+
+        return null;
+    }
+
+    private static List<List<ArchiveEntryListing>> BuildSplitPlan(
+        IReadOnlyList<ArchiveEntryListing> files,
+        long? maxBytes,
+        int? maxCount)
+    {
+        var parts = new List<List<ArchiveEntryListing>>();
+        var current = new List<ArchiveEntryListing>();
+        long currentBytes = 0;
+        foreach (var file in files)
+        {
+            var wouldExceedBytes = maxBytes is not null && current.Count > 0 && currentBytes + file.OriginalSize > maxBytes.Value;
+            var wouldExceedCount = maxCount is not null && current.Count >= maxCount.Value;
+            if (wouldExceedBytes || wouldExceedCount)
+            {
+                parts.Add(current);
+                current = new List<ArchiveEntryListing>();
+                currentBytes = 0;
+            }
+
+            current.Add(file);
+            currentBytes += file.OriginalSize;
+        }
+
+        if (current.Count > 0)
+        {
+            parts.Add(current);
+        }
+
+        return parts;
+    }
+
+    private static string BuildSplitOutputPath(string outputPrefix, int partNumber, string inputExtension)
+    {
+        var extension = Path.GetExtension(outputPrefix);
+        var effectiveExtension = IsSupportedWriteExtension(extension)
+            ? extension
+            : (IsSupportedWriteExtension(inputExtension) ? inputExtension : ".lpc");
+        var basePath = IsSupportedWriteExtension(extension)
+            ? outputPrefix[..^extension.Length]
+            : outputPrefix;
+        return $"{basePath}.part{partNumber:000}{effectiveExtension}";
+    }
+
+    private static bool HasDescendantFile(string directoryPath, IReadOnlyList<ArchiveEntryListing> files)
+    {
+        var prefix = NormalizeArchiveListingPath(directoryPath).TrimEnd('/') + "/";
+        return files.Any(file => NormalizeArchiveListingPath(file.Path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string CreateTempDirectory(string prefix)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"{prefix}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
     private static async Task<(string ArchivePath, string[] Operands, MutateArchiveOptions Options, ParsedPasswordOptions PasswordOptions)> ParseMutationCommandAsync(
         string[] args,
         string usage)
     {
         var positional = GetPositionalArgs(args);
-        if (positional.Count < 2)
+        var fromFileValues = ReadFromFileValues(args);
+        if (positional.Count < 2 && !(positional.Count == 1 && fromFileValues.Count > 0))
         {
             Console.Error.WriteLine($"Usage: {usage}");
             throw new ArgumentException("Missing required command arguments.");
@@ -849,7 +1956,11 @@ internal static class Program
         var archivePath = positional[0];
         var passwordOptions = ParsePasswordOptions(args);
         var options = await ParseMutationOptionsAsync(archivePath, args, passwordOptions).ConfigureAwait(false);
-        return (archivePath, positional.Skip(1).ToArray(), options, passwordOptions);
+        var operands = positional.Skip(1)
+            .Concat(fromFileValues)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return (archivePath, operands, options, passwordOptions);
     }
 
     private static async Task<MutateArchiveOptions> ParseMutationOptionsAsync(
@@ -862,6 +1973,7 @@ internal static class Program
             passwordOptions,
             new PasswordRequest(archivePath, "Mutate archive", IsWrite: true),
             passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(archivePath, password);
 
         return new MutateArchiveOptions
         {
@@ -899,12 +2011,16 @@ internal static class Program
                option.Equals("--block-size", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--threads", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--solid", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--from-file", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--password", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--password-file", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--keyfile", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--set", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--file", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--name", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--text", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--size", StringComparison.OrdinalIgnoreCase) ||
+               option.Equals("--count", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--volume-size", StringComparison.OrdinalIgnoreCase) ||
                option.Equals("--recovery-percent", StringComparison.OrdinalIgnoreCase);
     }
@@ -913,14 +2029,27 @@ internal static class Program
     {
         public string? Password { get; init; }
         public string? PasswordFile { get; init; }
+        public string? KeyfilePath { get; init; }
         public bool EncryptRequested { get; init; }
-        public bool HasExplicitSecret => Password is not null || PasswordFile is not null;
+        public bool HasExplicitSecret => Password is not null || PasswordFile is not null || KeyfilePath is not null;
+        public bool HasKeyfile => KeyfilePath is not null;
     }
+
+    private sealed record ArchiveDiffItem(
+        string Path,
+        string Status,
+        bool IsDirectory,
+        long? LeftSize,
+        long? RightSize,
+        string Reason);
+
+    private sealed record SplitOutputPart(string OutputArchive, int FileCount, long OriginalSize);
 
     private static ParsedPasswordOptions ParsePasswordOptions(string[] args)
     {
         string? password = null;
         string? passwordFile = null;
+        string? keyfilePath = null;
         var encrypt = false;
 
         for (var i = 0; i < args.Length; i++)
@@ -948,12 +2077,22 @@ internal static class Program
 
                 passwordFile = args[++i];
             }
+            else if (current.Equals("--keyfile", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length)
+                {
+                    throw new ArgumentException("--keyfile requires a path.");
+                }
+
+                keyfilePath = args[++i];
+            }
         }
 
         return new ParsedPasswordOptions
         {
             Password = password,
             PasswordFile = passwordFile,
+            KeyfilePath = keyfilePath,
             EncryptRequested = encrypt
         };
     }
@@ -964,10 +2103,10 @@ internal static class Program
         bool requirePassword,
         bool confirmInteractivePassword = false)
     {
-        var explicitPassword = ReadExplicitPassword(options);
-        if (explicitPassword is not null)
+        var explicitSecret = ReadExplicitSecret(options);
+        if (explicitSecret is not null)
         {
-            return explicitPassword;
+            return explicitSecret;
         }
 
         if (!requirePassword)
@@ -996,25 +2135,48 @@ internal static class Program
         return password;
     }
 
-    private static PasswordContext? ReadExplicitPassword(ParsedPasswordOptions options)
+    private static PasswordContext? ReadExplicitSecret(ParsedPasswordOptions options)
     {
-        if (options.Password is not null)
+        var password = options.Password;
+        if (options.PasswordFile is not null)
         {
-            return new PasswordContext(options.Password);
+            password = File.ReadAllText(options.PasswordFile).TrimEnd('\r', '\n');
+            if (string.IsNullOrEmpty(password))
+            {
+                throw new ArgumentException("Password file is empty.");
+            }
         }
 
-        if (options.PasswordFile is null)
+        var keyfileHash = ReadKeyfileHash(options.KeyfilePath);
+        if (password is null && keyfileHash is null)
         {
             return null;
         }
 
-        var value = File.ReadAllText(options.PasswordFile).TrimEnd('\r', '\n');
-        if (string.IsNullOrEmpty(value))
+        return new PasswordContext(password, keyfileHash);
+    }
+
+    private static byte[]? ReadKeyfileHash(string? keyfilePath)
+    {
+        if (keyfilePath is null)
         {
-            throw new ArgumentException("Password file is empty.");
+            return null;
         }
 
-        return new PasswordContext(value);
+        var keyfileBytes = File.ReadAllBytes(keyfilePath);
+        try
+        {
+            if (keyfileBytes.Length == 0)
+            {
+                throw new ArgumentException("Keyfile is empty.");
+            }
+
+            return SHA256.HashData(keyfileBytes);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(keyfileBytes);
+        }
     }
 
     private static IPasswordProvider CreatePasswordProvider()
@@ -1141,28 +2303,32 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.WriteLine("Laplace CLI");
+        Console.WriteLine("Global options on supported commands: --json for machine-readable output, --dry-run for non-mutating previews, --from-file for newline-delimited operand lists.");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--quiet] [--encrypt|--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--quiet] [--encrypt|--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
-        Console.WriteLine("  laplace extract <input_archive> <output_folder> [--overwrite] [--verify|--no-verify] [--quiet] [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace list <input_archive> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace info <input_archive> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace test <input_archive> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace add <archive> <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace freshen <archive> <input_path...> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace delete <archive> <entry_path_or_id...> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace rename <archive.lpc> <entry_path_or_id> <new_entry_path> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace comment <archive> --show|--set <text>|--file <path>|--clear [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace lock <archive> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace find <archive> [--name <glob>] [--text <value>] [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace view <archive.lpc> <entry_path_or_id> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--json]");
+        Console.WriteLine("  laplace extract <input_archive> <output_folder> [--name <glob>] [--overwrite] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace list <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace info <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace test <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace add <archive> <input_path...> [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace freshen <archive> <input_path...> [--from-file <path>] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace delete <archive> <entry_path_or_id_or_glob...> [--from-file <path>] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace rename <archive.lpc> <entry_path_or_id> <new_entry_path> [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace comment <archive> --show|--set <text>|--file <path>|--clear [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace lock <archive> [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace find <archive> [--name <glob>] [--text <value>] [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace diff <archive_a> <archive_b> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace merge <output_archive> <input_archive...> [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace split <archive> <output_prefix> (--size 700M|--count 100) [--mode fast|balanced|maximum|intensive|compressed|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace view <archive.lpc> <entry_path_or_id> [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace repair <archive.rar>");
-        Console.WriteLine("  laplace benchmark <input_path>");
+        Console.WriteLine("  laplace benchmark <input_path> [--json]");
         Console.WriteLine("  laplace open <archive.lpc>");
-        Console.WriteLine("  laplace extract-here <archive> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>]");
-        Console.WriteLine("  laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>]");
+        Console.WriteLine("  laplace extract-here <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace extract-dialog <archive>");
         Console.WriteLine("  laplace iso-to-drive-dialog <image.iso>");
         Console.WriteLine("  laplace integrate install|uninstall|status [--cli-path <path-to-laplace.exe>]");
@@ -1303,6 +2469,22 @@ internal static class Program
         return ArchiveFormatDetector.DetectReadKind(archivePath) == SupportedArchiveKind.Rar;
     }
 
+    private static void ValidatePasswordContextForArchiveRead(string archivePath, PasswordContext? password)
+    {
+        if (password?.HasKeyfile == true && !IsLpcArchive(archivePath))
+        {
+            throw new NotSupportedException("Keyfiles are supported for LPC archives only.");
+        }
+    }
+
+    private static void ValidatePasswordContextForArchiveWrite(string archivePath, PasswordContext? password)
+    {
+        if (password?.HasKeyfile == true && ArchiveFormatDetector.DetectWriteKind(archivePath) != SupportedArchiveKind.Lpc)
+        {
+            throw new NotSupportedException("Keyfiles are supported for LPC archives only.");
+        }
+    }
+
     private static void EnsureLpcArchive(string archivePath)
     {
         if (!IsLpcArchive(archivePath))
@@ -1340,7 +2522,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace extract-here <archive> [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace extract-here <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -1348,6 +2530,7 @@ internal static class Program
         var target = Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory();
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(archivePath, password);
         await RunWithPasswordRetryAsync(
             archivePath,
             "Extract archive",
@@ -1367,12 +2550,13 @@ internal static class Program
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(args[0], "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(args[0], password);
         await RunWithPasswordRetryAsync(
             args[0],
             "Extract archive",
@@ -1392,7 +2576,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>]");
+            Console.Error.WriteLine("Usage: laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -1400,6 +2584,7 @@ internal static class Program
         var folder = Path.Combine(Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(archivePath));
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
+        ValidatePasswordContextForArchiveRead(archivePath, password);
         await RunWithPasswordRetryAsync(
             archivePath,
             "Extract archive",

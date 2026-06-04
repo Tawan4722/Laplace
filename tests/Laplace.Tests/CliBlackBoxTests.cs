@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Xunit;
 
 namespace Laplace.Tests;
@@ -130,6 +131,46 @@ public sealed class CliBlackBoxTests
     }
 
     [Fact]
+    public async Task PasswordFileAndKeyfile_UnlockEncryptedLpc_AndNonLpcRejectsKeyfile()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "secret.txt");
+            var passwordFile = Path.Combine(root, "password.txt");
+            var keyfile = Path.Combine(root, "key.bin");
+            var archivePath = Path.Combine(root, "secret.lpc");
+            var extractPath = Path.Combine(root, "out");
+            var zipPath = Path.Combine(root, "secret.zip");
+            await File.WriteAllTextAsync(sourceFile, "two factor cli payload");
+            await File.WriteAllTextAsync(passwordFile, "correct horse battery staple");
+            await File.WriteAllBytesAsync(keyfile, Enumerable.Range(0, 64).Select(i => (byte)i).ToArray());
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceFile, archivePath, "--password-file", passwordFile, "--keyfile", keyfile, "--no-verify"));
+
+            var missingKeyfile = await RunLaplaceAsync("test", archivePath, "--password-file", passwordFile);
+            Assert.Equal(2, missingKeyfile.ExitCode);
+
+            var test = await RunLaplaceAsync("test", archivePath, "--password-file", passwordFile, "--keyfile", keyfile);
+            AssertSuccess(test);
+
+            var extract = await RunLaplaceAsync("extract", archivePath, extractPath, "--password-file", passwordFile, "--keyfile", keyfile, "--overwrite");
+            AssertSuccess(extract);
+            Assert.Equal(
+                await File.ReadAllTextAsync(sourceFile),
+                await File.ReadAllTextAsync(Path.Combine(extractPath, "secret.txt")));
+
+            var zipAttempt = await RunLaplaceAsync("compress", sourceFile, zipPath, "--password-file", passwordFile, "--keyfile", keyfile, "--no-verify");
+            Assert.Equal(2, zipAttempt.ExitCode);
+            Assert.Contains("Keyfiles are supported for LPC archives only", zipAttempt.StandardError);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public async Task MutationCommands_AddCommentFindDelete_Lpc_WorkThroughCli()
     {
         var root = CreateTempFolder();
@@ -158,6 +199,254 @@ public sealed class CliBlackBoxTests
             AssertSuccess(list);
             Assert.DoesNotContain("base.txt", list.StandardOutput);
             Assert.Contains("added.txt", list.StandardOutput);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task JsonMode_ListInfoTestFind_ReturnsMachineReadableOutput()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "json.txt");
+            var archivePath = Path.Combine(root, "json.lpc");
+            await File.WriteAllTextAsync(sourceFile, "json payload needle");
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceFile, archivePath, "--no-verify"));
+
+            var list = await RunLaplaceAsync("list", archivePath, "--json");
+            AssertSuccess(list);
+            using (var document = JsonDocument.Parse(list.StandardOutput))
+            {
+                Assert.Equal("list", document.RootElement.GetProperty("command").GetString());
+                Assert.Contains(document.RootElement.GetProperty("entries").EnumerateArray(), entry =>
+                    entry.GetProperty("path").GetString() == "json.txt");
+            }
+
+            var info = await RunLaplaceAsync("info", archivePath, "--json");
+            AssertSuccess(info);
+            using (var document = JsonDocument.Parse(info.StandardOutput))
+            {
+                Assert.Equal("info", document.RootElement.GetProperty("command").GetString());
+                Assert.Equal("LPC", document.RootElement.GetProperty("info").GetProperty("format").GetString());
+            }
+
+            var test = await RunLaplaceAsync("test", archivePath, "--json");
+            AssertSuccess(test);
+            using (var document = JsonDocument.Parse(test.StandardOutput))
+            {
+                Assert.True(document.RootElement.GetProperty("result").GetProperty("success").GetBoolean());
+            }
+
+            var find = await RunLaplaceAsync("find", archivePath, "--name", "*.txt", "--text", "needle", "--json");
+            AssertSuccess(find);
+            using (var document = JsonDocument.Parse(find.StandardOutput))
+            {
+                Assert.Equal("find", document.RootElement.GetProperty("command").GetString());
+                Assert.Contains(document.RootElement.GetProperty("results").EnumerateArray(), entry =>
+                    entry.GetProperty("path").GetString() == "json.txt" &&
+                    entry.GetProperty("textMatched").GetBoolean());
+            }
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task DryRun_CompressAndDelete_DoNotCreateOrMutateArchive()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "source.txt");
+            var deleteFile = Path.Combine(root, "delete-me.txt");
+            var dryArchivePath = Path.Combine(root, "dry.lpc");
+            var archivePath = Path.Combine(root, "payload.lpc");
+            await File.WriteAllTextAsync(sourceFile, "source payload");
+            await File.WriteAllTextAsync(deleteFile, "delete payload");
+
+            var dryCompress = await RunLaplaceAsync("compress", sourceFile, dryArchivePath, "--dry-run", "--json");
+            AssertSuccess(dryCompress);
+            Assert.False(File.Exists(dryArchivePath));
+            using (var document = JsonDocument.Parse(dryCompress.StandardOutput))
+            {
+                Assert.True(document.RootElement.GetProperty("dryRun").GetBoolean());
+                Assert.Equal(dryArchivePath, document.RootElement.GetProperty("outputPath").GetString());
+            }
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceFile, deleteFile, archivePath, "--no-verify"));
+
+            var dryDelete = await RunLaplaceAsync("delete", archivePath, "delete-me.txt", "--dry-run", "--json");
+            AssertSuccess(dryDelete);
+            using (var document = JsonDocument.Parse(dryDelete.StandardOutput))
+            {
+                Assert.Equal("delete", document.RootElement.GetProperty("command").GetString());
+                Assert.True(document.RootElement.GetProperty("dryRun").GetBoolean());
+            }
+
+            var list = await RunLaplaceAsync("list", archivePath);
+            AssertSuccess(list);
+            Assert.Contains("delete-me.txt", list.StandardOutput);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task Extract_NamePattern_AndDeleteGlobFromFile_WorkThroughCli()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "payload");
+            var nestedDir = Path.Combine(sourceDir, "nested");
+            Directory.CreateDirectory(nestedDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "alpha.txt"), "alpha");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "beta.log"), "beta");
+            await File.WriteAllTextAsync(Path.Combine(nestedDir, "gamma.txt"), "gamma");
+            var archivePath = Path.Combine(root, "payload.lpc");
+            var extractPath = Path.Combine(root, "out");
+            var deleteTargets = Path.Combine(root, "delete-targets.txt");
+            await File.WriteAllTextAsync(deleteTargets, "*.log");
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceDir, archivePath, "--no-verify"));
+
+            var extract = await RunLaplaceAsync("extract", archivePath, extractPath, "--name", "*.txt", "--overwrite");
+            AssertSuccess(extract);
+            Assert.True(File.Exists(Path.Combine(extractPath, "payload", "alpha.txt")));
+            Assert.True(File.Exists(Path.Combine(extractPath, "payload", "nested", "gamma.txt")));
+            Assert.False(File.Exists(Path.Combine(extractPath, "payload", "beta.log")));
+
+            var delete = await RunLaplaceAsync("delete", archivePath, "--from-file", deleteTargets, "--json");
+            AssertSuccess(delete);
+            using (var document = JsonDocument.Parse(delete.StandardOutput))
+            {
+                Assert.Equal("delete", document.RootElement.GetProperty("command").GetString());
+                Assert.Contains(document.RootElement.GetProperty("operands").EnumerateArray(), operand =>
+                    operand.GetString() == "payload/beta.log");
+            }
+
+            var list = await RunLaplaceAsync("list", archivePath);
+            AssertSuccess(list);
+            Assert.Contains("payload/alpha.txt", list.StandardOutput);
+            Assert.Contains("payload/nested/gamma.txt", list.StandardOutput);
+            Assert.DoesNotContain("payload/beta.log", list.StandardOutput);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task Diff_AndMergeFromFile_WorkThroughCli()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var leftDir = Path.Combine(root, "left");
+            var rightDir = Path.Combine(root, "right");
+            Directory.CreateDirectory(leftDir);
+            Directory.CreateDirectory(rightDir);
+            var leftCommon = Path.Combine(leftDir, "common.txt");
+            var leftOnly = Path.Combine(leftDir, "left-only.txt");
+            var rightCommon = Path.Combine(rightDir, "common.txt");
+            var rightOnly = Path.Combine(rightDir, "right-only.txt");
+            await File.WriteAllTextAsync(leftCommon, "left");
+            await File.WriteAllTextAsync(leftOnly, "left only");
+            await File.WriteAllTextAsync(rightCommon, "right side wins");
+            await File.WriteAllTextAsync(rightOnly, "right only");
+            var leftArchive = Path.Combine(root, "left.lpc");
+            var rightArchive = Path.Combine(root, "right.lpc");
+            var mergedArchive = Path.Combine(root, "merged.lpc");
+            var extractPath = Path.Combine(root, "merged-out");
+            var sourceList = Path.Combine(root, "merge-sources.txt");
+            await File.WriteAllTextAsync(sourceList, string.Join(Environment.NewLine, [leftArchive, rightArchive]));
+
+            AssertSuccess(await RunLaplaceAsync("compress", leftCommon, leftOnly, leftArchive, "--no-verify"));
+            AssertSuccess(await RunLaplaceAsync("compress", rightCommon, rightOnly, rightArchive, "--no-verify"));
+
+            var diff = await RunLaplaceAsync("diff", leftArchive, rightArchive, "--json");
+            AssertSuccess(diff);
+            using (var document = JsonDocument.Parse(diff.StandardOutput))
+            {
+                var changes = document.RootElement.GetProperty("changes").EnumerateArray().ToArray();
+                Assert.Contains(changes, change =>
+                    change.GetProperty("status").GetString() == "changed" &&
+                    change.GetProperty("path").GetString() == "common.txt");
+                Assert.Contains(changes, change =>
+                    change.GetProperty("status").GetString() == "removed" &&
+                    change.GetProperty("path").GetString() == "left-only.txt");
+                Assert.Contains(changes, change =>
+                    change.GetProperty("status").GetString() == "added" &&
+                    change.GetProperty("path").GetString() == "right-only.txt");
+            }
+
+            var merge = await RunLaplaceAsync("merge", mergedArchive, "--from-file", sourceList, "--no-verify", "--json");
+            AssertSuccess(merge);
+            Assert.True(File.Exists(mergedArchive));
+
+            var list = await RunLaplaceAsync("list", mergedArchive);
+            AssertSuccess(list);
+            Assert.Contains("left-only.txt", list.StandardOutput);
+            Assert.Contains("right-only.txt", list.StandardOutput);
+            Assert.Contains("common.txt", list.StandardOutput);
+
+            var extract = await RunLaplaceAsync("extract", mergedArchive, extractPath, "--overwrite");
+            AssertSuccess(extract);
+            Assert.Equal("right side wins", await File.ReadAllTextAsync(Path.Combine(extractPath, "common.txt")));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task Split_ByCount_CreatesPartArchives()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "payload");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "one.txt"), "one");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "two.txt"), "two");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "three.txt"), "three");
+            var archivePath = Path.Combine(root, "payload.lpc");
+            var outputPrefix = Path.Combine(root, "parts.lpc");
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceDir, archivePath, "--no-verify"));
+
+            var split = await RunLaplaceAsync("split", archivePath, outputPrefix, "--count", "1", "--no-verify", "--json");
+            AssertSuccess(split);
+            using (var document = JsonDocument.Parse(split.StandardOutput))
+            {
+                Assert.Equal(3, document.RootElement.GetProperty("partCount").GetInt32());
+            }
+
+            var part1 = Path.Combine(root, "parts.part001.lpc");
+            var part2 = Path.Combine(root, "parts.part002.lpc");
+            var part3 = Path.Combine(root, "parts.part003.lpc");
+            Assert.True(File.Exists(part1));
+            Assert.True(File.Exists(part2));
+            Assert.True(File.Exists(part3));
+
+            var list = await RunLaplaceAsync("list", part1, "--json");
+            AssertSuccess(list);
+            using (var document = JsonDocument.Parse(list.StandardOutput))
+            {
+                Assert.Single(document.RootElement.GetProperty("entries").EnumerateArray(), entry =>
+                    !entry.GetProperty("isDirectory").GetBoolean());
+            }
         }
         finally
         {

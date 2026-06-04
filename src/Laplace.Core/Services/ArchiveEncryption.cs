@@ -1,4 +1,5 @@
 using Laplace.Core.Models;
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -27,8 +28,15 @@ internal static class ArchiveEncryption
             throw new InvalidDataException("Encrypted archive key derivation settings are invalid.");
         }
 
-        using var kdf = new Rfc2898DeriveBytes(password.Password, salt, iterations, HashAlgorithmName.SHA256);
-        return kdf.GetBytes(KeySizeBytes);
+        var secretMaterial = BuildSecretMaterial(password);
+        try
+        {
+            return Rfc2898DeriveBytes.Pbkdf2(secretMaterial, salt, iterations, HashAlgorithmName.SHA256, KeySizeBytes);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secretMaterial);
+        }
     }
 
     public static byte[] EncryptBlock(byte[] plaintext, byte[] key, BlockEntryRecord block)
@@ -71,5 +79,26 @@ internal static class ArchiveEncryption
         writer.Write(block.IsRaw);
         writer.Flush();
         return ms.ToArray();
+    }
+
+    private static byte[] BuildSecretMaterial(PasswordContext password)
+    {
+        var passwordBytes = string.IsNullOrEmpty(password.Password)
+            ? Array.Empty<byte>()
+            : Encoding.UTF8.GetBytes(password.Password);
+        var keyfileHash = password.KeyfileHash ?? Array.Empty<byte>();
+        var material = new byte[8 + passwordBytes.Length + keyfileHash.Length];
+
+        BinaryPrimitives.WriteInt32LittleEndian(material.AsSpan(0, 4), passwordBytes.Length);
+        passwordBytes.CopyTo(material.AsSpan(4, passwordBytes.Length));
+        BinaryPrimitives.WriteInt32LittleEndian(material.AsSpan(4 + passwordBytes.Length, 4), keyfileHash.Length);
+        keyfileHash.CopyTo(material.AsSpan(8 + passwordBytes.Length, keyfileHash.Length));
+
+        if (passwordBytes.Length > 0)
+        {
+            CryptographicOperations.ZeroMemory(passwordBytes);
+        }
+
+        return material;
     }
 }
