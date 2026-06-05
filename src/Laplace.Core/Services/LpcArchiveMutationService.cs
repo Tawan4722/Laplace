@@ -53,7 +53,7 @@ public sealed class LpcArchiveMutationService
             throw new ArgumentException("At least one input path is required.", nameof(inputPaths));
         }
 
-        var archive = _reader.Read(archivePath);
+        var archive = _reader.Read(archivePath, options.Password);
         var entriesByPath = archive.FileEntries.ToDictionary(x => x.RelativePath, StringComparer.OrdinalIgnoreCase);
         return RewriteAsync(
             archivePath,
@@ -95,7 +95,7 @@ public sealed class LpcArchiveMutationService
             throw new ArgumentException("At least one archive entry target is required.", nameof(targets));
         }
 
-        var archive = _reader.Read(archivePath);
+        var archive = _reader.Read(archivePath, options.Password);
         return RewriteAsync(
             archivePath,
             options,
@@ -115,7 +115,7 @@ public sealed class LpcArchiveMutationService
 
     public Task RenameAsync(string archivePath, string target, string newRelativePath, MutateArchiveOptions options, CancellationToken cancellationToken = default)
     {
-        var archive = _reader.Read(archivePath);
+        var archive = _reader.Read(archivePath, options.Password);
         var oldRelativePath = ResolveSingleTarget(archive, target);
         return RewriteAsync(
             archivePath,
@@ -168,7 +168,7 @@ public sealed class LpcArchiveMutationService
 
     public IReadOnlyList<ArchiveFindResult> Find(string archivePath, ArchiveFindOptions options)
     {
-        var archive = _reader.Read(archivePath);
+        var archive = _reader.Read(archivePath, options.Password);
         var regex = GlobToRegex(string.IsNullOrWhiteSpace(options.NamePattern) ? "*" : options.NamePattern);
         var nameMatches = archive.FileEntries
             .Where(entry => regex.IsMatch(entry.RelativePath))
@@ -246,7 +246,7 @@ public sealed class LpcArchiveMutationService
 
     public byte[] ViewFile(string archivePath, string target, PasswordContext? password)
     {
-        var archive = _reader.Read(archivePath);
+        var archive = _reader.Read(archivePath, password);
         var relativePath = ResolveSingleTarget(archive, target);
         var entry = archive.FileEntries.Single(x => string.Equals(x.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase));
         if (entry.IsDirectory)
@@ -281,7 +281,7 @@ public sealed class LpcArchiveMutationService
         string? newComment = null,
         bool forceLock = false)
     {
-        archive ??= _reader.Read(archivePath);
+        archive ??= _reader.Read(archivePath, options.Password);
         if (archive.Header.IsLocked && preserveLock)
         {
             throw new InvalidOperationException("Archive is locked and cannot be mutated.");
@@ -317,6 +317,24 @@ public sealed class LpcArchiveMutationService
                     BlockSizeBytes = options.BlockSizeBytes ?? Math.Max(4 * 1024 * 1024, (int)archive.Header.DefaultBlockSize),
                     SolidMode = archive.Header.IsSolid ? Enums.SolidMode.On : Enums.SolidMode.Off,
                     Password = archive.Header.IsEncrypted ? options.Password : null,
+                    KeyDerivationAlgorithm = archive.Header.FormatVersion >= 5
+                        ? (Enums.KeyDerivationAlgorithm)archive.Header.KeyDerivationAlgorithmId
+                        : Enums.KeyDerivationAlgorithm.Pbkdf2Sha256,
+                    KeyDerivationIterations = archive.Header.FormatVersion < 5 ||
+                                              archive.Header.KeyDerivationAlgorithmId == (byte)Enums.KeyDerivationAlgorithm.Pbkdf2Sha256
+                        ? archive.Header.KeyDerivationIterations
+                        : CreateArchiveOptions.DefaultKeyDerivationIterations,
+                    Argon2Iterations = archive.Header.KeyDerivationAlgorithmId == (byte)Enums.KeyDerivationAlgorithm.Argon2id
+                        ? archive.Header.KeyDerivationIterations
+                        : CreateArchiveOptions.DefaultArgon2Iterations,
+                    Argon2MemoryKiB = archive.Header.KeyDerivationMemoryKiB > 0
+                        ? archive.Header.KeyDerivationMemoryKiB
+                        : CreateArchiveOptions.DefaultArgon2MemoryKiB,
+                    Argon2Parallelism = archive.Header.KeyDerivationParallelism > 0
+                        ? archive.Header.KeyDerivationParallelism
+                        : Math.Clamp(Environment.ProcessorCount, 1, 4),
+                    EncryptMetadata = archive.Header.IsMetadataEncrypted,
+                    RecoveryPercent = archive.Header.HasRecoveryRecord ? archive.Header.RecoveryPercent : 0,
                     Comment = newComment ?? archive.Header.Comment,
                     LockArchive = forceLock || archive.Header.IsLocked
                 },

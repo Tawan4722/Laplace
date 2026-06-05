@@ -38,6 +38,10 @@ public sealed class UniversalArchiveService
         {
             throw new NotSupportedException("Keyfiles are supported for LPC archives only.");
         }
+        if (writeKind != SupportedArchiveKind.Lpc && (options.EncryptMetadata || options.RecoveryPercent > 0))
+        {
+            throw new NotSupportedException("Metadata encryption and recovery records are supported for LPC archives only.");
+        }
 
         switch (writeKind)
         {
@@ -83,7 +87,7 @@ public sealed class UniversalArchiveService
     {
         return ArchiveFormatDetector.DetectReadKind(archivePath) switch
         {
-            SupportedArchiveKind.Lpc => ListLpc(archivePath),
+            SupportedArchiveKind.Lpc => ListLpc(archivePath, password),
             SupportedArchiveKind.Zip => _zipHandler.List(archivePath, password),
             _ => _externalHandler.List(archivePath, password)
         };
@@ -93,7 +97,7 @@ public sealed class UniversalArchiveService
     {
         return ArchiveFormatDetector.DetectReadKind(archivePath) switch
         {
-            SupportedArchiveKind.Lpc => InfoLpc(archivePath),
+            SupportedArchiveKind.Lpc => InfoLpc(archivePath, password),
             SupportedArchiveKind.Zip => _zipHandler.Info(archivePath, password),
             _ => _externalHandler.Info(archivePath, password)
         };
@@ -111,6 +115,10 @@ public sealed class UniversalArchiveService
 
     public bool IsEncrypted(string archivePath)
     {
+        if (ArchiveFormatDetector.DetectReadKind(archivePath) == SupportedArchiveKind.Lpc)
+        {
+            return _lpcReader.ReadHeaderOnly(archivePath).IsEncrypted;
+        }
         return Info(archivePath).IsEncrypted;
     }
 
@@ -123,9 +131,9 @@ public sealed class UniversalArchiveService
         return _estimator.EstimateAsync(inputPaths, options, progress, cancellationToken);
     }
 
-    private IReadOnlyList<ArchiveEntryListing> ListLpc(string archivePath)
+    private IReadOnlyList<ArchiveEntryListing> ListLpc(string archivePath, PasswordContext? password)
     {
-        var archive = _lpcReader.Read(archivePath);
+        var archive = _lpcReader.Read(archivePath, password);
         return archive.FileEntries
             .OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase)
             .Select(entry =>
@@ -173,9 +181,9 @@ public sealed class UniversalArchiveService
         }
     }
 
-    private ArchiveSummary InfoLpc(string archivePath)
+    private ArchiveSummary InfoLpc(string archivePath, PasswordContext? password)
     {
-        var archive = _lpcReader.Read(archivePath);
+        var archive = _lpcReader.Read(archivePath, password);
         var info = ArchiveInfoBuilder.Build(archive);
         return new ArchiveSummary
         {
@@ -191,8 +199,18 @@ public sealed class UniversalArchiveService
             CreatedUtc = info.CreatedUtc,
             IsEncrypted = info.IsEncrypted,
             IsLocked = info.IsLocked,
+            IsMetadataEncrypted = archive.Header.IsMetadataEncrypted,
+            HasRecoveryRecord = archive.Header.HasRecoveryRecord,
             Comment = info.Comment,
-            Notes = info.IsEncrypted ? "LPC payload blocks are encrypted; filenames and metadata remain visible." : string.Empty
+            Notes = string.Join(" ", new[]
+            {
+                archive.Header.IsMetadataEncrypted
+                    ? "LPC payload blocks and metadata tables are encrypted."
+                    : info.IsEncrypted
+                        ? "LPC payload blocks are encrypted; filenames and metadata remain visible."
+                        : string.Empty,
+                archive.Header.HasRecoveryRecord ? "LPC recovery records are available." : string.Empty
+            }.Where(note => note.Length > 0))
         };
     }
 

@@ -16,7 +16,7 @@ All offsets and sizes use 64-bit fields where relevant.
 | Field | Type | Notes |
 |---|---|---|
 | Magic | 4 bytes ASCII | `LPC1` |
-| FormatVersion | `UInt16` | `1` unencrypted, `2` encrypted payload blocks, `3` locked archives, `4` solid archives |
+| FormatVersion | `UInt16` | highest required feature version, currently `1` through `7` |
 | ArchiveFlags | `UInt16` | bit `1` = encrypted payload blocks |
 | CreatedUnixMilliseconds | `Int64` | UTC timestamp |
 | CreatorVersion | `UInt32` | Laplace writer version |
@@ -27,20 +27,38 @@ All offsets and sizes use 64-bit fields where relevant.
 | BlockTableOffset | `Int64` | absolute stream offset |
 | DataSectionOffset | `Int64` | absolute stream offset |
 | Comment | UTF-8 string | length-prefixed `Int32` + bytes |
-| EncryptionAlgorithmId | `Byte` | LPCv2 only; `1` = AES-256-GCM |
-| KeyDerivationIterations | `Int32` | LPCv2 only; PBKDF2-HMAC-SHA256 iterations. Current writers default to 600,000 and readers accept 210,000 through 5,000,000. |
-| EncryptionSalt | bytes | LPCv2 only; length-prefixed `Int32` + bytes. Current writers generate 32-byte salts; readers require at least 16 bytes. |
+| EncryptionAlgorithmId | `Byte` | version 2+; `1` = AES-256-GCM |
+| KeyDerivationAlgorithmId | `Byte` | version 5+; `1` = PBKDF2-HMAC-SHA256, `2` = Argon2id |
+| KeyDerivationIterations | `Int32` | PBKDF2 iterations or Argon2id time cost |
+| KeyDerivationMemoryKiB | `Int32` | version 5+; Argon2id memory cost |
+| KeyDerivationParallelism | `Int32` | version 5+; Argon2id lanes |
+| EncryptionSalt | bytes | length-prefixed `Int32` + bytes; current writers generate 32 bytes |
+| RecoveryRecordOffset | `Int64` | version 7+; absolute offset of the recovery section |
+| RecoveryRecordLength | `Int64` | version 7+; recovery section plus trailer length |
+| RecoveryPercent | `Int32` | version 7+; requested parity percentage |
 | HeaderChecksumCrc32C | `UInt32` | CRC32C over header bytes excluding this field |
 
-LPCv2 encryption protects block payload bytes only. File names, sizes, timestamps, and table metadata remain readable so `list` and `info` can work without decrypting file contents.
+New encrypted archives use Argon2id with a time cost of 3, 64 MiB of memory, and up to 4 lanes by default. Readers retain the implicit PBKDF2 interpretation used by LPCv2-v4. LPCv5 records the KDF explicitly and can identify either algorithm.
 
 Current archive flags:
 
 - bit `1` = encrypted payload blocks
 - bit `2` = locked archive
 - bit `4` = solid archive layout
+- bit `8` = encrypted file and block tables
+- bit `16` = Reed-Solomon recovery record
 
-LPCv3 is written when the locked archive flag is used. LPCv4 is written when the native solid archive layout is used. Metadata encryption, recovery records, and multi-volume output are still reserved and rejected by current writers.
+Feature versions:
+
+- LPCv1: base unencrypted layout
+- LPCv2: AES-256-GCM payload encryption with implicit PBKDF2-HMAC-SHA256
+- LPCv3: locked archive flag
+- LPCv4: native solid stream layout
+- LPCv5: explicit KDF algorithm and parameters
+- LPCv6: encrypted metadata tables
+- LPCv7: recovery section and end trailer
+
+`FormatVersion` is the highest version required by the selected feature combination. Multi-volume and SFX output remain reserved.
 
 ## File Entry Table
 
@@ -85,6 +103,47 @@ Each block record stores:
 
 For solid LPC archives, `OwningFileEntryId` is set to `-1` and blocks are mapped back to files through `DataStreamOffset`, `FirstBlockIndex`, and `BlockCount`.
 
+Solid block compression may run concurrently. Blocks are still written in ascending `BlockId` and `OriginalStreamOffset` order, so the on-disk layout remains deterministic.
+
+## Encrypted Metadata Tables
+
+When archive flag bit `8` is set, the file and block tables are serialized normally and then encrypted independently with AES-256-GCM. Each table location contains:
+
+- `CiphertextLength` (`Int32`)
+- `NonceLength` (`Int32`)
+- `Nonce` (`Byte[]`, currently 12 bytes)
+- `TagLength` (`Int32`)
+- `Tag` (`Byte[]`, currently 16 bytes)
+- `Ciphertext` (`Byte[]`)
+
+The authentication data binds the table kind, format version, archive flags, file count, and block count. Listing, information, extraction, testing, and mutation require the archive password because table contents include paths and block offsets.
+
+## Recovery Section
+
+LPCv7 protects every byte before `RecoveryRecordOffset`, including the header, payload blocks, and metadata tables. Data is divided into 64 KiB shards and stripes of at most 32 data shards. Each stripe adds `ceil(dataShardCount * RecoveryPercent / 100)` Reed-Solomon parity shards.
+
+Recovery record header:
+
+- magic `LPCR`
+- recovery version (`UInt16`, currently `1`)
+- reserved (`UInt16`)
+- protected length (`Int64`)
+- shard size (`Int32`)
+- maximum data shards per stripe (`Int32`)
+- recovery percentage (`Int32`)
+- stripe count (`Int32`)
+
+Each stripe stores:
+
+- data shard count (`Int32`)
+- parity shard count (`Int32`)
+- final data shard length (`Int32`)
+- CRC32C for each data shard
+- CRC32C for each parity shard
+- full-size parity shard bytes
+
+The record ends with its CRC32C. A fixed 28-byte `LPCT` trailer stores the recovery version, record offset, record length, and trailer CRC32C. Repair locates this trailer from the end of the file, identifies damaged data shards by CRC32C, and reconstructs up to the available parity count without needing the encryption password.
+
 ## Compression Method IDs
 
 - `0 = RAW`
@@ -103,7 +162,9 @@ For solid LPC archives, `OwningFileEntryId` is set to `-1` and blocks are mapped
 - Header CRC32C validates archive metadata framing.
 - Block CRC32C validates stored block bytes before decompression.
 - File SHA-256 validates reconstructed file content.
-- Encrypted LPCv2 blocks use AES-256-GCM authentication before decompression.
+- Encrypted blocks use AES-256-GCM authentication before decompression.
+- LPCv6 metadata tables use independent AES-256-GCM nonces and tags.
+- LPCv7 recovery records use per-shard CRC32C, parity CRC32C, a record CRC32C, and a trailer CRC32C.
 
 ## Versioning Policy
 

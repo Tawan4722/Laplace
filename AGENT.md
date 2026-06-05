@@ -47,11 +47,12 @@ The files below explain most of the project surface:
 - optional keyfile-based encryption context for LPC archives
 - locked archives through LPCv3
 - native solid archive layout through LPCv4
+- versioned Argon2id/PBKDF2 key derivation through LPCv5
+- authenticated metadata encryption through LPCv6
+- Reed-Solomon recovery records through LPCv7
 
 Reserved but not implemented:
 
-- metadata encryption
-- recovery records
 - multi-volume archives
 - SFX output
 
@@ -142,28 +143,28 @@ LPC encryption today supports:
 
 Important implementation fact:
 
-- LPC encrypted key derivation is still PBKDF2-HMAC-SHA256 with bounded iterations
+- new LPC encrypted archives use Argon2id by default with bounded time, memory, and parallelism parameters
+- LPCv2-v4 PBKDF2-HMAC-SHA256 archives remain readable, and LPCv5 can explicitly identify either KDF
 - keyfiles are supported for LPC archives only
 - ZIP, 7z, RAR, and other non-LPC paths reject keyfile-based encryption options
-- encryption still protects payload blocks only; filenames and table metadata remain visible
+- payload blocks use AES-256-GCM; LPCv6 can also encrypt and authenticate file and block tables
 - solid LPC is single-stream and works for create, list, extract, test, and rewrite-style mutation
-- multi-threaded solid block compression is still not implemented
+- solid blocks can be compressed concurrently while preserving deterministic block order
+- LPCv7 recovery records use striped Reed-Solomon parity and can repair damaged protected shards without a password
 
 ## To Do
 
-Current format-level backlog after native LPC solid layout:
+Completed format-level backlog after native LPC solid layout:
 
-- [ ] Argon2id key-derivation versioning for LPC encrypted archives
-- [ ] Metadata encryption for LPC file and block tables
-- [ ] Multi-threaded solid block compression on top of the LPCv4 solid layout
-- [ ] Recovery records and Reed-Solomon repair data
+- [x] Argon2id key-derivation versioning for LPC encrypted archives
+- [x] Metadata encryption for LPC file and block tables
+- [x] Multi-threaded solid block compression on top of the LPCv4 solid layout
+- [x] Recovery records and Reed-Solomon repair data
 
-Recommended order:
+Remaining reserved format work:
 
-1. Argon2id KDF versioning
-2. Metadata encryption
-3. Parallel solid compression
-4. Recovery and repair
+- [ ] Multi-volume LPC output
+- [ ] SFX output
 
 ## Change Rules
 
@@ -186,10 +187,8 @@ Do not claim:
 - Laplace is generally better than RAR or 7-Zip without a benchmark
 - `ZPAQ` or `BSC` are built in
 - CAB has a native first-class writer
-- Argon2id-based LPC key derivation is implemented
-- LPC metadata encryption is implemented
-- LPC recovery/self-healing is implemented
-- metadata encryption, recovery records, or multi-volume LPC are implemented
+- multi-volume LPC is implemented
+- SFX LPC output is implemented
 
 If a change touches release packaging, verify the release script and installer/MSIX paths as well.
 

@@ -1,20 +1,80 @@
 using Laplace.Core.Exceptions;
 using Laplace.Core.Models;
+using System.Security.Cryptography;
 
 namespace Laplace.Core.Services;
 
 public sealed class ArchiveReader
 {
-    public ArchiveDocument Read(string archivePath)
+    public ArchiveDocument Read(string archivePath, PasswordContext? password = null)
     {
         using var stream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         var header = ArchiveFormatCodec.ReadHeader(stream);
         ArchiveValidator.ValidateHeader(header, stream.Length);
 
-        stream.Position = header.FileTableOffset;
-        var files = ArchiveFormatCodec.ReadFileEntries(stream, header.FileEntryCount, header.FormatVersion);
-        stream.Position = header.BlockTableOffset;
-        var blocks = ArchiveFormatCodec.ReadBlockEntries(stream, header.BlockEntryCount, header.FormatVersion);
+        List<FileEntryRecord> files;
+        List<BlockEntryRecord> blocks;
+        if (header.IsMetadataEncrypted)
+        {
+            if (password is null)
+            {
+                throw new ArchivePasswordRequiredException(archivePath);
+            }
+
+            var key = ArchiveEncryption.DeriveKey(password, header);
+            try
+            {
+                stream.Position = header.FileTableOffset;
+                var filePayload = ArchiveFormatCodec.DecodeEncryptedTablePayload(
+                    ArchiveFormatCodec.ReadEncryptedTable(stream, "file table"));
+                stream.Position = header.BlockTableOffset;
+                var blockPayload = ArchiveFormatCodec.DecodeEncryptedTablePayload(
+                    ArchiveFormatCodec.ReadEncryptedTable(stream, "block table"));
+                byte[] filePlaintext = [];
+                byte[] blockPlaintext = [];
+                try
+                {
+                    filePlaintext = ArchiveEncryption.DecryptMetadata(
+                        filePayload.Ciphertext,
+                        filePayload.Nonce,
+                        filePayload.Tag,
+                        key,
+                        "file table",
+                        header);
+                    blockPlaintext = ArchiveEncryption.DecryptMetadata(
+                        blockPayload.Ciphertext,
+                        blockPayload.Nonce,
+                        blockPayload.Tag,
+                        key,
+                        "block table",
+                        header);
+                    using var fileStream = new MemoryStream(filePlaintext, writable: false);
+                    using var blockStream = new MemoryStream(blockPlaintext, writable: false);
+                    files = ArchiveFormatCodec.ReadFileEntries(fileStream, header.FileEntryCount, header.FormatVersion);
+                    blocks = ArchiveFormatCodec.ReadBlockEntries(blockStream, header.BlockEntryCount, header.FormatVersion);
+                }
+                catch (CryptographicException)
+                {
+                    throw new ArchivePasswordException("Invalid password or corrupted encrypted LPC metadata.");
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(filePlaintext);
+                    CryptographicOperations.ZeroMemory(blockPlaintext);
+                }
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
+            }
+        }
+        else
+        {
+            stream.Position = header.FileTableOffset;
+            files = ArchiveFormatCodec.ReadFileEntries(stream, header.FileEntryCount, header.FormatVersion);
+            stream.Position = header.BlockTableOffset;
+            blocks = ArchiveFormatCodec.ReadBlockEntries(stream, header.BlockEntryCount, header.FormatVersion);
+        }
         ArchiveValidator.ValidateBlockEntries(blocks, stream.Length, header);
 
         return new ArchiveDocument
@@ -25,9 +85,9 @@ public sealed class ArchiveReader
         };
     }
 
-    public IReadOnlyList<FileEntryRecord> ListEntries(string archivePath)
+    public IReadOnlyList<FileEntryRecord> ListEntries(string archivePath, PasswordContext? password = null)
     {
-        return Read(archivePath).FileEntries;
+        return Read(archivePath, password).FileEntries;
     }
 
     public ArchiveHeader ReadHeaderOnly(string archivePath)

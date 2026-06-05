@@ -820,7 +820,9 @@ public sealed class MainForm : Form
             $"Archive: {archivePath}",
             $"Format: {info.Format}{version}",
             $"Encrypted: {(info.IsEncrypted ? "Yes" : "No")}",
+            $"Metadata encrypted: {(info.IsMetadataEncrypted ? "Yes" : "No")}",
             $"Locked: {(info.IsLocked ? "Yes" : "No")}",
+            $"Recovery record: {(info.HasRecoveryRecord ? "Yes" : "No")}",
             string.IsNullOrEmpty(info.Comment) ? string.Empty : $"Comment: {info.Comment}",
             $"Files: {info.FileCount}",
             $"Folders: {info.FolderCount}",
@@ -892,6 +894,8 @@ internal sealed class CreateArchiveDialog : Form
     private readonly NumericUpDown _threads = new();
     private readonly CheckBox _verify = new();
     private readonly CheckBox _encrypt = new();
+    private readonly CheckBox _hideNames = new();
+    private readonly NumericUpDown _recovery = new();
     private readonly TextBox _password = new();
     private readonly TextBox _confirmPassword = new();
     private bool _autoOutputPath = true;
@@ -900,7 +904,7 @@ internal sealed class CreateArchiveDialog : Form
     public CreateArchiveDialog(IEnumerable<string> initialInputs)
     {
         Text = "Add to archive";
-        ClientSize = new Size(720, 528);
+        ClientSize = new Size(720, 584);
         MinimumSize = new Size(640, 460);
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 9F);
@@ -913,7 +917,7 @@ internal sealed class CreateArchiveDialog : Form
             ColumnCount = 1
         };
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 238));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 294));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
         _inputs.Dock = DockStyle.Fill;
@@ -942,7 +946,7 @@ internal sealed class CreateArchiveDialog : Form
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        for (var i = 0; i < 8; i++)
+        for (var i = 0; i < 10; i++)
         {
             options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         }
@@ -961,6 +965,18 @@ internal sealed class CreateArchiveDialog : Form
         _verify.AutoSize = true;
         _encrypt.Text = "Encrypt";
         _encrypt.AutoSize = true;
+        _hideNames.Text = "Hide names";
+        _hideNames.AutoSize = true;
+        _hideNames.CheckedChanged += (_, _) =>
+        {
+            if (_hideNames.Checked)
+            {
+                _encrypt.Checked = true;
+            }
+        };
+        _recovery.Minimum = 0;
+        _recovery.Maximum = 100;
+        _recovery.Width = 110;
 
         options.Controls.Add(FormLabel("Archive"), 0, 0);
         options.Controls.Add(_output, 1, 0);
@@ -977,8 +993,11 @@ internal sealed class CreateArchiveDialog : Form
         options.Controls.Add(_password, 1, 5);
         options.Controls.Add(FormLabel("Confirm"), 0, 6);
         options.Controls.Add(_confirmPassword, 1, 6);
-        options.Controls.Add(_verify, 1, 7);
-        options.Controls.Add(_encrypt, 2, 7);
+        options.Controls.Add(FormLabel("Recovery %"), 0, 7);
+        options.Controls.Add(_recovery, 1, 7);
+        options.Controls.Add(_verify, 1, 8);
+        options.Controls.Add(_encrypt, 2, 8);
+        options.Controls.Add(_hideNames, 2, 9);
         _output.Dock = DockStyle.Fill;
         _password.Dock = DockStyle.Left;
         _password.Width = 220;
@@ -1018,7 +1037,9 @@ internal sealed class CreateArchiveDialog : Form
         SolidMode = ParseSolidMode(_solid.Text),
         Threads = (int)_threads.Value,
         VerifyAfterCompression = _verify.Checked,
-        Password = _encrypt.Checked ? PasswordContext.FromNullable(_password.Text) : null
+        Password = _encrypt.Checked ? PasswordContext.FromNullable(_password.Text) : null,
+        EncryptMetadata = _hideNames.Checked,
+        RecoveryPercent = (int)_recovery.Value
     };
 
     private void AddFiles(object? sender, EventArgs e)
@@ -1100,6 +1121,14 @@ internal sealed class CreateArchiveDialog : Form
         if (_encrypt.Checked && string.IsNullOrEmpty(_password.Text))
         {
             ShowDialogMessage("Enter a password or turn off encryption.");
+            DialogResult = DialogResult.None;
+            return;
+        }
+
+        if ((_hideNames.Checked || _recovery.Value > 0) &&
+            !Path.GetExtension(_output.Text).Equals(".lpc", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowDialogMessage("Metadata encryption and recovery records require an LPC archive.");
             DialogResult = DialogResult.None;
             return;
         }

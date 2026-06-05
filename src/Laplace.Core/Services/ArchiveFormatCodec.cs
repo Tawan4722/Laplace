@@ -27,9 +27,24 @@ internal static class ArchiveFormatCodec
             if (header.FormatVersion >= 2)
             {
                 writer.Write(header.EncryptionAlgorithmId);
+                if (header.FormatVersion >= 5)
+                {
+                    writer.Write(header.KeyDerivationAlgorithmId);
+                }
                 writer.Write(header.KeyDerivationIterations);
+                if (header.FormatVersion >= 5)
+                {
+                    writer.Write(header.KeyDerivationMemoryKiB);
+                    writer.Write(header.KeyDerivationParallelism);
+                }
                 writer.Write(header.EncryptionSalt.Length);
                 writer.Write(header.EncryptionSalt);
+            }
+            if (header.FormatVersion >= 7)
+            {
+                writer.Write(header.RecoveryRecordOffset);
+                writer.Write(header.RecoveryRecordLength);
+                writer.Write(header.RecoveryPercent);
             }
         }
 
@@ -65,12 +80,23 @@ internal static class ArchiveFormatCodec
         var dataSectionOffset = reader.ReadInt64();
         var comment = BinaryCodec.ReadUtf8String(reader);
         byte encryptionAlgorithmId = 0;
+        byte keyDerivationAlgorithmId = 0;
         var keyDerivationIterations = 0;
+        var keyDerivationMemoryKiB = 0;
+        var keyDerivationParallelism = 0;
         byte[] encryptionSalt = [];
         if (formatVersion >= 2)
         {
             encryptionAlgorithmId = reader.ReadByte();
+            keyDerivationAlgorithmId = formatVersion >= 5
+                ? reader.ReadByte()
+                : (byte)KeyDerivationAlgorithm.Pbkdf2Sha256;
             keyDerivationIterations = reader.ReadInt32();
+            if (formatVersion >= 5)
+            {
+                keyDerivationMemoryKiB = reader.ReadInt32();
+                keyDerivationParallelism = reader.ReadInt32();
+            }
             var saltLength = reader.ReadInt32();
             if (saltLength < 0 || saltLength > 1024)
             {
@@ -82,6 +108,15 @@ internal static class ArchiveFormatCodec
             {
                 throw new EndOfStreamException("Unexpected end of stream while reading encryption salt.");
             }
+        }
+        long recoveryRecordOffset = 0;
+        long recoveryRecordLength = 0;
+        var recoveryPercent = 0;
+        if (formatVersion >= 7)
+        {
+            recoveryRecordOffset = reader.ReadInt64();
+            recoveryRecordLength = reader.ReadInt64();
+            recoveryPercent = reader.ReadInt32();
         }
 
         var checksumPosition = stream.Position;
@@ -117,9 +152,86 @@ internal static class ArchiveFormatCodec
             Comment = comment,
             HeaderChecksumCrc32C = checksum,
             EncryptionAlgorithmId = encryptionAlgorithmId,
+            KeyDerivationAlgorithmId = keyDerivationAlgorithmId,
             KeyDerivationIterations = keyDerivationIterations,
-            EncryptionSalt = encryptionSalt
+            KeyDerivationMemoryKiB = keyDerivationMemoryKiB,
+            KeyDerivationParallelism = keyDerivationParallelism,
+            EncryptionSalt = encryptionSalt,
+            RecoveryRecordOffset = recoveryRecordOffset,
+            RecoveryRecordLength = recoveryRecordLength,
+            RecoveryPercent = recoveryPercent
         };
+    }
+
+    public static byte[] SerializeFileEntries(IReadOnlyList<FileEntryRecord> entries, ushort formatVersion)
+    {
+        using var stream = new MemoryStream();
+        WriteFileEntries(stream, entries, formatVersion);
+        return stream.ToArray();
+    }
+
+    public static byte[] SerializeBlockEntries(IReadOnlyList<BlockEntryRecord> blocks, ushort formatVersion)
+    {
+        using var stream = new MemoryStream();
+        WriteBlockEntries(stream, blocks, formatVersion);
+        return stream.ToArray();
+    }
+
+    public static void WriteEncryptedTable(Stream stream, EncryptedPayload payload)
+    {
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
+        writer.Write(payload.Ciphertext.Length);
+        writer.Write(payload.Nonce.Length);
+        writer.Write(payload.Nonce);
+        writer.Write(payload.Tag.Length);
+        writer.Write(payload.Tag);
+        writer.Write(payload.Ciphertext);
+    }
+
+    public static byte[] ReadEncryptedTable(Stream stream, string tableName)
+    {
+        using var reader = new BinaryReader(stream, Encoding.UTF8, true);
+        var ciphertextLength = reader.ReadInt32();
+        var nonceLength = reader.ReadInt32();
+        if (ciphertextLength < 0 || ciphertextLength > 1024 * 1024 * 1024 ||
+            nonceLength < 0 || nonceLength > 1024)
+        {
+            throw new LaplaceArchiveException($"Invalid encrypted {tableName} framing.");
+        }
+
+        var nonce = reader.ReadBytes(nonceLength);
+        var tagLength = reader.ReadInt32();
+        if (nonce.Length != nonceLength || tagLength < 0 || tagLength > 1024)
+        {
+            throw new LaplaceArchiveException($"Invalid encrypted {tableName} framing.");
+        }
+
+        var tag = reader.ReadBytes(tagLength);
+        var ciphertext = reader.ReadBytes(ciphertextLength);
+        if (tag.Length != tagLength || ciphertext.Length != ciphertextLength)
+        {
+            throw new EndOfStreamException($"Unexpected end of stream while reading encrypted {tableName}.");
+        }
+
+        using var payload = new MemoryStream();
+        using var writer = new BinaryWriter(payload, Encoding.UTF8, true);
+        writer.Write(nonce.Length);
+        writer.Write(nonce);
+        writer.Write(tag.Length);
+        writer.Write(tag);
+        writer.Write(ciphertext.Length);
+        writer.Write(ciphertext);
+        return payload.ToArray();
+    }
+
+    public static (byte[] Nonce, byte[] Tag, byte[] Ciphertext) DecodeEncryptedTablePayload(byte[] payload)
+    {
+        using var stream = new MemoryStream(payload, writable: false);
+        using var reader = new BinaryReader(stream, Encoding.UTF8, true);
+        var nonce = reader.ReadBytes(reader.ReadInt32());
+        var tag = reader.ReadBytes(reader.ReadInt32());
+        var ciphertext = reader.ReadBytes(reader.ReadInt32());
+        return (nonce, tag, ciphertext);
     }
 
     public static void WriteFileEntries(Stream stream, IReadOnlyList<FileEntryRecord> entries, ushort formatVersion = 1)

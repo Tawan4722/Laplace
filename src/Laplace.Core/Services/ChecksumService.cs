@@ -26,6 +26,7 @@ public static class ChecksumService
     }
 
     private static readonly uint[] Crc32CTable = BuildCrc32CTable();
+    internal static uint[] Crc32CTableForRecovery => Crc32CTable;
 
     private static uint[] BuildCrc32CTable()
     {

@@ -25,7 +25,7 @@ public sealed class ArchiveExtractor
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var archive = _archiveReader.Read(archivePath);
+        var archive = _archiveReader.Read(archivePath, options.Password);
         ArchiveReader.ValidateEntryBlockReferences(archive);
         var encryptionKey = Array.Empty<byte>();
         if (archive.Header.IsEncrypted)
@@ -35,7 +35,7 @@ public sealed class ArchiveExtractor
                 throw new ArchivePasswordRequiredException(archivePath);
             }
 
-            encryptionKey = ArchiveEncryption.DeriveKey(options.Password, archive.Header.EncryptionSalt, archive.Header.KeyDerivationIterations);
+            encryptionKey = ArchiveEncryption.DeriveKey(options.Password, archive.Header);
         }
         var selectedIds = ExpandSelectedIdsWithDescendants(archive.FileEntries, options.SelectedEntryIds);
         var targets = archive.FileEntries

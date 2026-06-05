@@ -45,19 +45,29 @@ public sealed class ArchiveWriter
             Comment = options.Comment
         };
         var useSolid = ShouldUseSolidMode(options, sorted);
-        if (options.EncryptMetadata)
+        if (options.BlockSizeBytes <= 0)
         {
-            throw new NotSupportedException("LPC metadata encryption is reserved for LPCv3 but is not implemented yet.");
+            throw new ArgumentOutOfRangeException(nameof(options.BlockSizeBytes), "Block size must be positive.");
         }
 
         if (options.VolumeSizeBytes is not null)
         {
-            throw new NotSupportedException("LPC multi-volume output is reserved for LPCv3 but is not implemented yet.");
+            throw new NotSupportedException("LPC multi-volume output is reserved but is not implemented yet.");
         }
 
-        if (options.RecoveryPercent > 0)
+        if (options.Threads < 1)
         {
-            throw new NotSupportedException("LPC recovery records are reserved for LPCv3 but are not implemented yet.");
+            throw new ArgumentOutOfRangeException(nameof(options.Threads), "Thread count must be at least 1.");
+        }
+
+        if (options.EncryptMetadata && options.Password is null)
+        {
+            throw new InvalidOperationException("Metadata encryption requires a password or keyfile.");
+        }
+
+        if (options.RecoveryPercent is < 0 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options.RecoveryPercent), "Recovery percentage must be between 0 and 100.");
         }
 
         if (options.LockArchive)
@@ -72,22 +82,57 @@ public sealed class ArchiveWriter
             header.ArchiveFlags |= ArchiveHeader.SolidFlag;
         }
 
+        if (options.EncryptMetadata)
+        {
+            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)6);
+            header.ArchiveFlags |= ArchiveHeader.MetadataEncryptionFlag;
+        }
+
+        if (options.RecoveryPercent > 0)
+        {
+            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)7);
+            header.ArchiveFlags |= ArchiveHeader.RecoveryRecordFlag;
+            header.RecoveryPercent = options.RecoveryPercent;
+        }
+
         var encryptionKey = Array.Empty<byte>();
         if (options.Password is not null)
         {
-            if (options.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
-                options.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
-            {
-                throw new InvalidOperationException(
-                    $"Key derivation iterations must be between {CreateArchiveOptions.MinimumKeyDerivationIterations:N0} and {CreateArchiveOptions.MaximumKeyDerivationIterations:N0}.");
-            }
-
-            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)2);
+            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)5);
             header.ArchiveFlags |= ArchiveHeader.EncryptionFlag;
             header.EncryptionAlgorithmId = ArchiveHeader.EncryptionAlgorithmAes256Gcm;
-            header.KeyDerivationIterations = options.KeyDerivationIterations;
+            header.KeyDerivationAlgorithmId = (byte)options.KeyDerivationAlgorithm;
+            switch (options.KeyDerivationAlgorithm)
+            {
+                case KeyDerivationAlgorithm.Pbkdf2Sha256:
+                    if (options.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
+                        options.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
+                    {
+                        throw new InvalidOperationException(
+                            $"PBKDF2 iterations must be between {CreateArchiveOptions.MinimumKeyDerivationIterations:N0} and {CreateArchiveOptions.MaximumKeyDerivationIterations:N0}.");
+                    }
+                    header.KeyDerivationIterations = options.KeyDerivationIterations;
+                    break;
+                case KeyDerivationAlgorithm.Argon2id:
+                    if (options.Argon2Iterations < CreateArchiveOptions.MinimumArgon2Iterations ||
+                        options.Argon2Iterations > CreateArchiveOptions.MaximumArgon2Iterations ||
+                        options.Argon2MemoryKiB < CreateArchiveOptions.MinimumArgon2MemoryKiB ||
+                        options.Argon2MemoryKiB > CreateArchiveOptions.MaximumArgon2MemoryKiB ||
+                        options.Argon2Parallelism < 1 ||
+                        options.Argon2Parallelism > CreateArchiveOptions.MaximumArgon2Parallelism)
+                    {
+                        throw new InvalidOperationException("Argon2id settings are outside the supported safety bounds.");
+                    }
+                    header.KeyDerivationIterations = options.Argon2Iterations;
+                    header.KeyDerivationMemoryKiB = options.Argon2MemoryKiB;
+                    header.KeyDerivationParallelism = options.Argon2Parallelism;
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unsupported key derivation algorithm: {options.KeyDerivationAlgorithm}.");
+            }
+
             header.EncryptionSalt = ArchiveEncryption.CreateSalt();
-            encryptionKey = ArchiveEncryption.DeriveKey(options.Password, header.EncryptionSalt, header.KeyDerivationIterations);
+            encryptionKey = ArchiveEncryption.DeriveKey(options.Password, header);
         }
 
         try
@@ -118,12 +163,63 @@ public sealed class ArchiveWriter
             header.FileEntryCount = fileEntries.Count;
             header.BlockEntryCount = blockEntries.Count;
             header.FileTableOffset = archiveStream.Position;
-            ArchiveFormatCodec.WriteFileEntries(archiveStream, fileEntries, header.FormatVersion);
+            if (header.IsMetadataEncrypted)
+            {
+                var plaintext = ArchiveFormatCodec.SerializeFileEntries(fileEntries, header.FormatVersion);
+                try
+                {
+                    ArchiveFormatCodec.WriteEncryptedTable(
+                        archiveStream,
+                        ArchiveEncryption.EncryptMetadata(plaintext, encryptionKey, "file table", header));
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(plaintext);
+                }
+            }
+            else
+            {
+                ArchiveFormatCodec.WriteFileEntries(archiveStream, fileEntries, header.FormatVersion);
+            }
             header.BlockTableOffset = archiveStream.Position;
-            ArchiveFormatCodec.WriteBlockEntries(archiveStream, blockEntries, header.FormatVersion);
+            if (header.IsMetadataEncrypted)
+            {
+                var plaintext = ArchiveFormatCodec.SerializeBlockEntries(blockEntries, header.FormatVersion);
+                try
+                {
+                    ArchiveFormatCodec.WriteEncryptedTable(
+                        archiveStream,
+                        ArchiveEncryption.EncryptMetadata(plaintext, encryptionKey, "block table", header));
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(plaintext);
+                }
+            }
+            else
+            {
+                ArchiveFormatCodec.WriteBlockEntries(archiveStream, blockEntries, header.FormatVersion);
+            }
+
+            if (header.HasRecoveryRecord)
+            {
+                header.RecoveryRecordOffset = archiveStream.Position;
+                header.RecoveryRecordLength = LpcRecoveryService.CalculateRecordLength(
+                    header.RecoveryRecordOffset,
+                    options.RecoveryPercent);
+            }
 
             archiveStream.Position = 0;
             ArchiveFormatCodec.WriteHeader(archiveStream, header);
+            if (header.HasRecoveryRecord)
+            {
+                archiveStream.Position = header.RecoveryRecordOffset;
+                await LpcRecoveryService.WriteRecordAsync(
+                    archiveStream,
+                    header.RecoveryRecordOffset,
+                    options.RecoveryPercent,
+                    cancellationToken).ConfigureAwait(false);
+            }
             await archiveStream.FlushAsync(cancellationToken).ConfigureAwait(false);
 
             return new ArchiveDocument
@@ -261,6 +357,8 @@ public sealed class ArchiveWriter
         var solidBufferLength = 0;
         var blockHintPath = string.Empty;
         var readBuffer = new byte[Math.Min(options.BlockSizeBytes, 256 * 1024)];
+        var pendingBlocks = new Queue<Task<PreparedSolidBlock>>();
+        var maxPendingBlocks = Math.Max(1, options.Threads);
 
         foreach (var sourceEntry in sorted)
         {
@@ -312,7 +410,23 @@ public sealed class ArchiveWriter
 
                     if (solidBufferLength == solidBuffer.Length)
                     {
-                        await FlushSolidBlockAsync(blockHintPath, options.Mode, header, encryptionKey, solidBuffer, solidBufferLength, blockStreamOffset, archiveStream, blockEntries, cancellationToken).ConfigureAwait(false);
+                        var blockId = blockEntries.Count + pendingBlocks.Count;
+                        var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
+                        var hintPath = blockHintPath;
+                        var streamOffset = blockStreamOffset;
+                        pendingBlocks.Enqueue(Task.Run(
+                            () => PrepareSolidBlock(blockId, hintPath, options.Mode, blockData, streamOffset),
+                            cancellationToken));
+                        if (pendingBlocks.Count >= maxPendingBlocks)
+                        {
+                            await WritePreparedSolidBlockAsync(
+                                await pendingBlocks.Dequeue().ConfigureAwait(false),
+                                header,
+                                encryptionKey,
+                                archiveStream,
+                                blockEntries,
+                                cancellationToken).ConfigureAwait(false);
+                        }
                         blockStreamOffset += solidBufferLength;
                         solidBufferLength = 0;
                     }
@@ -333,38 +447,64 @@ public sealed class ArchiveWriter
 
         if (solidBufferLength > 0)
         {
-            await FlushSolidBlockAsync(blockHintPath, options.Mode, header, encryptionKey, solidBuffer, solidBufferLength, blockStreamOffset, archiveStream, blockEntries, cancellationToken).ConfigureAwait(false);
+            var blockId = blockEntries.Count + pendingBlocks.Count;
+            var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
+            var hintPath = blockHintPath;
+            var streamOffset = blockStreamOffset;
+            pendingBlocks.Enqueue(Task.Run(
+                () => PrepareSolidBlock(blockId, hintPath, options.Mode, blockData, streamOffset),
+                cancellationToken));
+        }
+
+        while (pendingBlocks.Count > 0)
+        {
+            await WritePreparedSolidBlockAsync(
+                await pendingBlocks.Dequeue().ConfigureAwait(false),
+                header,
+                encryptionKey,
+                archiveStream,
+                blockEntries,
+                cancellationToken).ConfigureAwait(false);
         }
 
         FinalizeSolidFileEntries(fileEntries, blockEntries);
     }
 
-    private async Task FlushSolidBlockAsync(
+    private PreparedSolidBlock PrepareSolidBlock(
+        long blockId,
         string blockHintPath,
         CompressionMode mode,
+        byte[] blockData,
+        long originalStreamOffset)
+    {
+        var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(blockHintPath, mode, blockData, blockData.Length);
+        var compressor = _compressorRegistry.GetCompressor(outputMethod);
+        return new PreparedSolidBlock(
+            new BlockEntryRecord
+            {
+                BlockId = blockId,
+                OwningFileEntryId = -1,
+                OriginalBlockSize = blockData.Length,
+                CompressedBlockSize = outputBytes.Length,
+                CompressionMethod = outputMethod,
+                CompressionLevel = compressor.Level,
+                OriginalStreamOffset = originalStreamOffset,
+                Flags = isRaw ? 1u : 0u,
+                IsRaw = isRaw
+            },
+            outputBytes);
+    }
+
+    private static async Task WritePreparedSolidBlockAsync(
+        PreparedSolidBlock prepared,
         ArchiveHeader header,
         byte[] encryptionKey,
-        byte[] solidBuffer,
-        int solidBufferLength,
-        long originalStreamOffset,
         FileStream archiveStream,
         List<BlockEntryRecord> blockEntries,
         CancellationToken cancellationToken)
     {
-        var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(blockHintPath, mode, solidBuffer, solidBufferLength);
-        var compressor = _compressorRegistry.GetCompressor(outputMethod);
-        var block = new BlockEntryRecord
-        {
-            BlockId = blockEntries.Count,
-            OwningFileEntryId = -1,
-            OriginalBlockSize = solidBufferLength,
-            CompressedBlockSize = outputBytes.Length,
-            CompressionMethod = outputMethod,
-            CompressionLevel = compressor.Level,
-            OriginalStreamOffset = originalStreamOffset,
-            Flags = isRaw ? 1u : 0u,
-            IsRaw = isRaw
-        };
+        var block = prepared.Block;
+        var outputBytes = prepared.Bytes;
 
         if (header.IsEncrypted)
         {
@@ -625,4 +765,6 @@ public sealed class ArchiveWriter
         var idx = normalized.LastIndexOf('/');
         return idx <= 0 ? string.Empty : normalized[..idx];
     }
+
+    private sealed record PreparedSolidBlock(BlockEntryRecord Block, byte[] Bytes);
 }

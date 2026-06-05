@@ -61,15 +61,19 @@ Unsupported formats fail with a clear error. For some non-password external arch
 - LPCv2 for encrypted payload blocks
 - LPCv3 for locked archives
 - LPCv4 for native solid archives
+- LPCv5 for versioned Argon2id/PBKDF2 key derivation
+- LPCv6 for encrypted file and block tables
+- LPCv7 for Reed-Solomon recovery records
 - Sequential data, file, and block metadata sections
 - Header CRC32C
 - Per-block CRC32C
 - Per-file SHA-256
-- Optional AES-256-GCM payload encryption
+- Optional AES-256-GCM payload and metadata encryption
+- Optional Reed-Solomon recovery data
 
-LPCv2 encryption protects block payload bytes only. File names, sizes, timestamps, and table metadata remain visible so `list` and `info` can work without decrypting payloads.
+New encrypted LPC archives use Argon2id by default. Older PBKDF2-HMAC-SHA256 archives remain readable, and LPCv5 records the selected KDF and its bounded parameters explicitly.
 
-LPCv3 currently exists for locked archives. LPCv4 adds the native solid archive layout. Metadata encryption, recovery records, and multi-volume output are still reserved and return explicit unsupported-feature errors until implemented.
+Payload encryption protects compressed block bytes. With `--hide-names`, LPCv6 also encrypts and authenticates file and block tables, so listing and archive details require the password. LPCv7 recovery records add striped Reed-Solomon parity that `laplace repair` can use without decrypting the archive. Multi-volume and SFX output remain reserved.
 
 See [docs/LPC_FORMAT.md](docs/LPC_FORMAT.md) for the binary layout.
 
@@ -153,7 +157,7 @@ laplace comment <archive.lpc> --set "text"
 laplace lock <archive.lpc>
 laplace find <archive> --name "*.txt" --text "needle"
 laplace view <archive> <entry>
-laplace repair <archive.rar>
+laplace repair <archive.lpc|archive.rar>
 laplace benchmark <input_path>
 laplace open <archive>
 laplace extract-here <archive>
@@ -172,6 +176,12 @@ Password inputs:
 
 Non-interactive runs must use explicit password inputs.
 
+LPC-specific creation options:
+
+- `--hide-names` encrypts file and block tables and implies an encrypted archive.
+- `--recovery-percent <1-100>` appends Reed-Solomon recovery data.
+- `--threads <N>` controls parallel solid-block compression.
+
 ## Desktop UI
 
 The desktop app supports:
@@ -184,6 +194,7 @@ The desktop app supports:
 - delete selected LPC entries
 - test archive integrity
 - password prompts
+- metadata-encryption and recovery-record creation options
 - extract ISO contents to a removable drive
 
 Opening an `.lpc` file from Explorer also opens the desktop UI when shell integration is enabled.

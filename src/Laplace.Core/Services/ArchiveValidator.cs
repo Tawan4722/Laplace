@@ -8,7 +8,7 @@ public static class ArchiveValidator
 {
     public static void ValidateHeader(ArchiveHeader header, long archiveLength)
     {
-        if (header.FormatVersion is not (1 or 2 or 3 or 4))
+        if (header.FormatVersion is < 1 or > 7)
         {
             throw new LaplaceArchiveException($"Unsupported LPC format version: {header.FormatVersion}");
         }
@@ -55,17 +55,67 @@ public static class ArchiveValidator
                 throw new LaplaceArchiveException($"Unsupported LPC encryption algorithm: {header.EncryptionAlgorithmId}");
             }
 
-            if (header.EncryptionSalt.Length < ArchiveEncryption.MinimumSaltSizeBytes ||
-                header.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
-                header.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
+            if (header.EncryptionSalt.Length < ArchiveEncryption.MinimumSaltSizeBytes)
             {
                 throw new LaplaceArchiveException("Invalid LPC encryption metadata.");
+            }
+
+            if (header.FormatVersion >= 5)
+            {
+                if (!Enum.IsDefined(typeof(KeyDerivationAlgorithm), header.KeyDerivationAlgorithmId))
+                {
+                    throw new LaplaceArchiveException($"Unsupported LPC key derivation algorithm: {header.KeyDerivationAlgorithmId}");
+                }
+
+                var kdf = (KeyDerivationAlgorithm)header.KeyDerivationAlgorithmId;
+                if (kdf == KeyDerivationAlgorithm.Pbkdf2Sha256 &&
+                    (header.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
+                     header.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations))
+                {
+                    throw new LaplaceArchiveException("Invalid LPC PBKDF2 metadata.");
+                }
+                if (kdf == KeyDerivationAlgorithm.Argon2id &&
+                    (header.KeyDerivationIterations < CreateArchiveOptions.MinimumArgon2Iterations ||
+                     header.KeyDerivationIterations > CreateArchiveOptions.MaximumArgon2Iterations ||
+                     header.KeyDerivationMemoryKiB < CreateArchiveOptions.MinimumArgon2MemoryKiB ||
+                     header.KeyDerivationMemoryKiB > CreateArchiveOptions.MaximumArgon2MemoryKiB ||
+                     header.KeyDerivationParallelism < 1 ||
+                     header.KeyDerivationParallelism > CreateArchiveOptions.MaximumArgon2Parallelism))
+                {
+                    throw new LaplaceArchiveException("Invalid LPC Argon2id metadata.");
+                }
+            }
+            else if (header.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
+                     header.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
+            {
+                throw new LaplaceArchiveException("Invalid LPC PBKDF2 metadata.");
             }
         }
 
         if (header.IsSolid && header.FormatVersion < 4)
         {
             throw new LaplaceArchiveException("Solid LPC archives require format version 4.");
+        }
+
+        if (header.IsMetadataEncrypted)
+        {
+            if (header.FormatVersion < 6 || !header.IsEncrypted)
+            {
+                throw new LaplaceArchiveException("Encrypted LPC metadata requires LPC format version 6 and payload encryption.");
+            }
+        }
+
+        if (header.HasRecoveryRecord)
+        {
+            if (header.FormatVersion < 7 ||
+                header.RecoveryRecordOffset <= header.BlockTableOffset ||
+                header.RecoveryRecordLength <= 0 ||
+                header.RecoveryPercent is < 1 or > 100 ||
+                header.RecoveryRecordOffset > archiveLength ||
+                header.RecoveryRecordLength > archiveLength - header.RecoveryRecordOffset)
+            {
+                throw new LaplaceArchiveException("Invalid LPC recovery record metadata.");
+            }
         }
     }
 

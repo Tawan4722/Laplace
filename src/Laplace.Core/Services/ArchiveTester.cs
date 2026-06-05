@@ -31,7 +31,19 @@ public sealed class ArchiveTester
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var archive = _archiveReader.Read(archivePath);
+        ArchiveDocument archive;
+        try
+        {
+            archive = _archiveReader.Read(archivePath, password);
+        }
+        catch (ArchivePasswordRequiredException ex)
+        {
+            return TestArchiveResult.Failed(ex.Message);
+        }
+        catch (ArchivePasswordException ex)
+        {
+            return TestArchiveResult.Failed(ex.Message);
+        }
         ArchiveReader.ValidateEntryBlockReferences(archive);
         var files = archive.FileEntries.Where(f => !f.IsDirectory).ToList();
         var totalBytes = files.Sum(f => f.OriginalSize);
@@ -44,7 +56,7 @@ public sealed class ArchiveTester
                 return TestArchiveResult.Failed($"Archive requires a password: {archivePath}");
             }
 
-            encryptionKey = ArchiveEncryption.DeriveKey(password, archive.Header.EncryptionSalt, archive.Header.KeyDerivationIterations);
+            encryptionKey = ArchiveEncryption.DeriveKey(password, archive.Header);
         }
 
         try
@@ -108,6 +120,18 @@ public sealed class ArchiveTester
                             return TestArchiveResult.Failed($"SHA-256 mismatch for file {file.RelativePath}.");
                         }
                     }
+                }
+            }
+
+            if (archive.Header.HasRecoveryRecord)
+            {
+                try
+                {
+                    await new LpcRecoveryService().ValidateRecordAsync(archivePath, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or LaplaceArchiveException)
+                {
+                    return TestArchiveResult.Failed($"Recovery record validation failed: {ex.Message}");
                 }
             }
 

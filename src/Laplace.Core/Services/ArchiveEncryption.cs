@@ -1,3 +1,5 @@
+using Konscious.Security.Cryptography;
+using Laplace.Core.Enums;
 using Laplace.Core.Models;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
@@ -15,28 +17,68 @@ internal static class ArchiveEncryption
 
     public static byte[] CreateSalt() => RandomNumberGenerator.GetBytes(GeneratedSaltSizeBytes);
 
-    public static byte[] DeriveKey(PasswordContext password, byte[] salt, int iterations)
+    public static byte[] DeriveKey(PasswordContext password, ArchiveHeader header)
     {
-        if (salt.Length < MinimumSaltSizeBytes)
+        if (header.EncryptionSalt.Length < MinimumSaltSizeBytes)
         {
             throw new InvalidDataException("Encrypted archive salt is invalid.");
         }
 
-        if (iterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
-            iterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
-        {
-            throw new InvalidDataException("Encrypted archive key derivation settings are invalid.");
-        }
-
+        var algorithm = header.FormatVersion >= 5
+            ? (KeyDerivationAlgorithm)header.KeyDerivationAlgorithmId
+            : KeyDerivationAlgorithm.Pbkdf2Sha256;
         var secretMaterial = BuildSecretMaterial(password);
         try
         {
-            return Rfc2898DeriveBytes.Pbkdf2(secretMaterial, salt, iterations, HashAlgorithmName.SHA256, KeySizeBytes);
+            return algorithm switch
+            {
+                KeyDerivationAlgorithm.Pbkdf2Sha256 => DerivePbkdf2(secretMaterial, header),
+                KeyDerivationAlgorithm.Argon2id => DeriveArgon2id(secretMaterial, header),
+                _ => throw new InvalidDataException($"Unsupported LPC key derivation algorithm: {header.KeyDerivationAlgorithmId}.")
+            };
         }
         finally
         {
             CryptographicOperations.ZeroMemory(secretMaterial);
         }
+    }
+
+    private static byte[] DerivePbkdf2(byte[] secretMaterial, ArchiveHeader header)
+    {
+        if (header.KeyDerivationIterations < CreateArchiveOptions.MinimumKeyDerivationIterations ||
+            header.KeyDerivationIterations > CreateArchiveOptions.MaximumKeyDerivationIterations)
+        {
+            throw new InvalidDataException("Encrypted archive PBKDF2 settings are invalid.");
+        }
+
+        return Rfc2898DeriveBytes.Pbkdf2(
+            secretMaterial,
+            header.EncryptionSalt,
+            header.KeyDerivationIterations,
+            HashAlgorithmName.SHA256,
+            KeySizeBytes);
+    }
+
+    private static byte[] DeriveArgon2id(byte[] secretMaterial, ArchiveHeader header)
+    {
+        if (header.KeyDerivationIterations < CreateArchiveOptions.MinimumArgon2Iterations ||
+            header.KeyDerivationIterations > CreateArchiveOptions.MaximumArgon2Iterations ||
+            header.KeyDerivationMemoryKiB < CreateArchiveOptions.MinimumArgon2MemoryKiB ||
+            header.KeyDerivationMemoryKiB > CreateArchiveOptions.MaximumArgon2MemoryKiB ||
+            header.KeyDerivationParallelism < 1 ||
+            header.KeyDerivationParallelism > CreateArchiveOptions.MaximumArgon2Parallelism)
+        {
+            throw new InvalidDataException("Encrypted archive Argon2id settings are invalid.");
+        }
+
+        using var argon2 = new Argon2id(secretMaterial)
+        {
+            Salt = header.EncryptionSalt,
+            Iterations = header.KeyDerivationIterations,
+            MemorySize = header.KeyDerivationMemoryKiB,
+            DegreeOfParallelism = header.KeyDerivationParallelism
+        };
+        return argon2.GetBytes(KeySizeBytes);
     }
 
     public static byte[] EncryptBlock(byte[] plaintext, byte[] key, BlockEntryRecord block)
@@ -66,6 +108,35 @@ internal static class ArchiveEncryption
         return plaintext;
     }
 
+    public static EncryptedPayload EncryptMetadata(byte[] plaintext, byte[] key, string tableName, ArchiveHeader header)
+    {
+        var nonce = RandomNumberGenerator.GetBytes(NonceSizeBytes);
+        var tag = new byte[TagSizeBytes];
+        var ciphertext = new byte[plaintext.Length];
+        using var aes = new AesGcm(key, TagSizeBytes);
+        aes.Encrypt(nonce, plaintext, ciphertext, tag, BuildMetadataAdditionalData(tableName, header));
+        return new EncryptedPayload(ciphertext, nonce, tag);
+    }
+
+    public static byte[] DecryptMetadata(
+        byte[] ciphertext,
+        byte[] nonce,
+        byte[] tag,
+        byte[] key,
+        string tableName,
+        ArchiveHeader header)
+    {
+        if (nonce.Length != NonceSizeBytes || tag.Length != TagSizeBytes)
+        {
+            throw new InvalidDataException($"Encrypted {tableName} metadata is invalid.");
+        }
+
+        var plaintext = new byte[ciphertext.Length];
+        using var aes = new AesGcm(key, TagSizeBytes);
+        aes.Decrypt(nonce, ciphertext, tag, plaintext, BuildMetadataAdditionalData(tableName, header));
+        return plaintext;
+    }
+
     private static byte[] BuildAdditionalData(BlockEntryRecord block)
     {
         using var ms = new MemoryStream();
@@ -77,6 +148,20 @@ internal static class ArchiveEncryption
         writer.Write(block.CompressedBlockSize);
         writer.Write((byte)block.CompressionMethod);
         writer.Write(block.IsRaw);
+        writer.Flush();
+        return ms.ToArray();
+    }
+
+    private static byte[] BuildMetadataAdditionalData(string tableName, ArchiveHeader header)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
+        writer.Write("LPC6"u8);
+        BinaryCodec.WriteUtf8String(writer, tableName);
+        writer.Write(header.FormatVersion);
+        writer.Write(header.ArchiveFlags);
+        writer.Write(header.FileEntryCount);
+        writer.Write(header.BlockEntryCount);
         writer.Flush();
         return ms.ToArray();
     }
@@ -102,3 +187,5 @@ internal static class ArchiveEncryption
         return material;
     }
 }
+
+internal sealed record EncryptedPayload(byte[] Ciphertext, byte[] Nonce, byte[] Tag);

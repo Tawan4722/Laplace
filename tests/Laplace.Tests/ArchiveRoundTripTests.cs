@@ -1,4 +1,5 @@
 using Laplace.Compression;
+using Laplace.Core.Abstractions;
 using Laplace.Core.Compression;
 using Laplace.Core.Exceptions;
 using Laplace.Core.Enums;
@@ -6,6 +7,7 @@ using Laplace.Core.Models;
 using Laplace.Core.Security;
 using Laplace.Core.Services;
 using System.Security.Cryptography;
+using System.Text;
 using ZipEntry = ICSharpCode.SharpZipLib.Zip.ZipEntry;
 using ZipOutputStream = ICSharpCode.SharpZipLib.Zip.ZipOutputStream;
 using Xunit;
@@ -410,8 +412,10 @@ public sealed class ArchiveRoundTripTests
 
         var archive = new ArchiveReader().Read(archivePath);
         Assert.True(archive.Header.IsEncrypted);
-        Assert.Equal(2, archive.Header.FormatVersion);
-        Assert.Equal(CreateArchiveOptions.DefaultKeyDerivationIterations, archive.Header.KeyDerivationIterations);
+        Assert.Equal(5, archive.Header.FormatVersion);
+        Assert.Equal((byte)KeyDerivationAlgorithm.Argon2id, archive.Header.KeyDerivationAlgorithmId);
+        Assert.Equal(CreateArchiveOptions.DefaultArgon2Iterations, archive.Header.KeyDerivationIterations);
+        Assert.Equal(CreateArchiveOptions.DefaultArgon2MemoryKiB, archive.Header.KeyDerivationMemoryKiB);
         Assert.Equal(ArchiveEncryption.GeneratedSaltSizeBytes, archive.Header.EncryptionSalt.Length);
 
         var tester = new ArchiveTester(registry);
@@ -480,9 +484,69 @@ public sealed class ArchiveRoundTripTests
             writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
             {
                 Password = new PasswordContext("correct horse battery staple"),
+                KeyDerivationAlgorithm = KeyDerivationAlgorithm.Pbkdf2Sha256,
                 KeyDerivationIterations = iterations,
                 VerifyAfterCompression = false
             }));
+    }
+
+    [Fact]
+    public async Task EncryptedLpc_ExplicitPbkdf2_RoundTripsWithVersionedKdf()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "legacy-kdf.txt");
+        await File.WriteAllTextAsync(sourceFile, "PBKDF2 compatibility payload");
+        var archivePath = Path.Combine(root, "legacy-kdf.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var password = new PasswordContext("compatibility password");
+        var registry = new CompressorRegistry();
+
+        await new ArchiveWriter(registry).CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Password = password,
+            KeyDerivationAlgorithm = KeyDerivationAlgorithm.Pbkdf2Sha256,
+            KeyDerivationIterations = CreateArchiveOptions.MinimumKeyDerivationIterations,
+            VerifyAfterCompression = false
+        });
+
+        var archive = new ArchiveReader().Read(archivePath);
+        Assert.Equal(5, archive.Header.FormatVersion);
+        Assert.Equal((byte)KeyDerivationAlgorithm.Pbkdf2Sha256, archive.Header.KeyDerivationAlgorithmId);
+        Assert.True((await new ArchiveTester(registry).TestAsync(archivePath, password)).Success);
+
+        await new ArchiveExtractor(registry).ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            Password = password
+        });
+        Assert.Equal("PBKDF2 compatibility payload", await File.ReadAllTextAsync(Path.Combine(extractPath, "legacy-kdf.txt")));
+    }
+
+    [Fact]
+    public async Task MetadataEncryptedLpc_HidesTablesAndRequiresPasswordForListing()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "hidden-name.txt");
+        await File.WriteAllTextAsync(sourceFile, "metadata encryption payload");
+        var archivePath = Path.Combine(root, "hidden.lpc");
+        var password = new PasswordContext("metadata password");
+        var registry = new CompressorRegistry();
+
+        await new ArchiveWriter(registry).CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Password = password,
+            EncryptMetadata = true,
+            VerifyAfterCompression = false
+        });
+
+        var reader = new ArchiveReader();
+        var header = reader.ReadHeaderOnly(archivePath);
+        Assert.Equal(6, header.FormatVersion);
+        Assert.True(header.IsMetadataEncrypted);
+        Assert.Throws<ArchivePasswordRequiredException>(() => reader.Read(archivePath));
+        Assert.Throws<ArchivePasswordException>(() => reader.Read(archivePath, new PasswordContext("wrong")));
+        Assert.Contains(reader.Read(archivePath, password).FileEntries, entry => entry.RelativePath == "hidden-name.txt");
+        Assert.Equal(-1, File.ReadAllBytes(archivePath).AsSpan().IndexOf(Encoding.UTF8.GetBytes("hidden-name.txt")));
     }
 
     [Fact]
@@ -652,6 +716,87 @@ public sealed class ArchiveRoundTripTests
 
         Assert.True(File.Exists(Path.Combine(extractPath, "payload", "alpha.txt")));
         Assert.False(File.Exists(Path.Combine(extractPath, "payload", "beta.txt")));
+    }
+
+    [Fact]
+    public async Task SolidLpc_UsesConfiguredParallelCompressionAndKeepsBlockOrder()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "parallel");
+        Directory.CreateDirectory(sourceDir);
+        for (var i = 0; i < 12; i++)
+        {
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, $"part-{i:00}.txt"), new string((char)('A' + i), 96 * 1024));
+        }
+
+        var trackingRegistry = new TrackingCompressorRegistry();
+        var archivePath = Path.Combine(root, "parallel.lpc");
+        var archive = await new ArchiveWriter(trackingRegistry).CreateAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Fast,
+            SolidMode = SolidMode.On,
+            BlockSizeBytes = 64 * 1024,
+            Threads = 4,
+            VerifyAfterCompression = false
+        });
+
+        Assert.True(trackingRegistry.MaximumConcurrentCompression > 1);
+        Assert.Equal(
+            Enumerable.Range(0, archive.BlockEntries.Count).Select(value => (long)value),
+            archive.BlockEntries.Select(block => block.BlockId));
+        Assert.Equal(
+            archive.BlockEntries.OrderBy(block => block.OriginalStreamOffset).Select(block => block.BlockId),
+            archive.BlockEntries.Select(block => block.BlockId));
+        Assert.True((await new ArchiveTester(trackingRegistry).TestAsync(archivePath)).Success);
+    }
+
+    [Fact]
+    public async Task RecoveryRecord_RepairsCorruptedPayloadShard()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "recover.txt");
+        await File.WriteAllTextAsync(sourceFile, string.Concat(Enumerable.Repeat("recovery payload line\n", 20_000)));
+        var archivePath = Path.Combine(root, "recover.lpc");
+        var extractPath = Path.Combine(root, "out");
+        var registry = new CompressorRegistry();
+
+        await new ArchiveWriter(registry).CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Fast,
+            BlockSizeBytes = 64 * 1024,
+            RecoveryPercent = 25,
+            VerifyAfterCompression = false
+        });
+
+        var archive = new ArchiveReader().Read(archivePath);
+        Assert.Equal(7, archive.Header.FormatVersion);
+        Assert.True(archive.Header.HasRecoveryRecord);
+        Assert.Equal(25, archive.Header.RecoveryPercent);
+        var block = archive.BlockEntries[archive.BlockEntries.Count / 2];
+        await using (var stream = new FileStream(archivePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            stream.Position = block.DataOffset + Math.Max(0, block.CompressedBlockSize / 2);
+            var value = stream.ReadByte();
+            stream.Position--;
+            stream.WriteByte((byte)(value ^ 0x5A));
+        }
+
+        Assert.False((await new ArchiveTester(registry).TestAsync(archivePath)).Success);
+        var repairedShards = await new LpcRecoveryService().RepairAsync(archivePath);
+        Assert.True(repairedShards >= 1);
+        Assert.True((await new ArchiveTester(registry).TestAsync(archivePath)).Success);
+
+        await new ArchiveExtractor(registry).ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+        Assert.Equal(await File.ReadAllTextAsync(sourceFile), await File.ReadAllTextAsync(Path.Combine(extractPath, "recover.txt")));
+
+        await using (var stream = new FileStream(archivePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            stream.Position = archive.Header.RecoveryRecordOffset + 40;
+            var value = stream.ReadByte();
+            stream.Position--;
+            stream.WriteByte((byte)(value ^ 0xA5));
+        }
+        Assert.False((await new ArchiveTester(registry).TestAsync(archivePath)).Success);
     }
 
     [Fact]
@@ -997,6 +1142,69 @@ public sealed class ArchiveRoundTripTests
             if (!OperatingSystem.IsWindows())
             {
                 Skip = "Windows native archive extraction is only available on Windows.";
+            }
+        }
+    }
+
+    private sealed class TrackingCompressorRegistry : ICompressorRegistry
+    {
+        private readonly CompressorRegistry _inner = new();
+        private readonly TrackingCompressor _tracking;
+
+        public TrackingCompressorRegistry()
+        {
+            _tracking = new TrackingCompressor(_inner.GetCompressor(CompressionMethod.Lz4Fast));
+        }
+
+        public int MaximumConcurrentCompression => _tracking.MaximumConcurrentCompression;
+
+        public IBlockCompressor GetCompressor(CompressionMethod method)
+            => method == CompressionMethod.Lz4Fast ? _tracking : _inner.GetCompressor(method);
+    }
+
+    private sealed class TrackingCompressor : IBlockCompressor
+    {
+        private readonly IBlockCompressor _inner;
+        private int _activeCompression;
+        private int _maximumConcurrentCompression;
+
+        public TrackingCompressor(IBlockCompressor inner)
+        {
+            _inner = inner;
+        }
+
+        public CompressionMethod Method => _inner.Method;
+        public int Level => _inner.Level;
+        public int MaximumConcurrentCompression => Volatile.Read(ref _maximumConcurrentCompression);
+
+        public byte[] Compress(ReadOnlySpan<byte> data)
+        {
+            var active = Interlocked.Increment(ref _activeCompression);
+            UpdateMaximum(active);
+            try
+            {
+                Thread.Sleep(25);
+                return _inner.Compress(data);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeCompression);
+            }
+        }
+
+        public byte[] Decompress(ReadOnlySpan<byte> data, int expectedDecompressedSize)
+            => _inner.Decompress(data, expectedDecompressedSize);
+
+        private void UpdateMaximum(int candidate)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _maximumConcurrentCompression);
+                if (candidate <= current ||
+                    Interlocked.CompareExchange(ref _maximumConcurrentCompression, candidate, current) == current)
+                {
+                    return;
+                }
             }
         }
     }

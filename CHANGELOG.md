@@ -4,6 +4,14 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.8.0 - 2026-06-06
+
+- Added LPCv5 versioned key derivation with Argon2id defaults and backward-compatible PBKDF2 reads.
+- Added LPCv6 AES-256-GCM encryption for file and block metadata tables through `--hide-names`.
+- Added ordered multi-threaded solid-block compression using the configured thread count.
+- Added LPCv7 striped Reed-Solomon recovery records, integrity validation, and native `laplace repair` support.
+- Added desktop controls and archive information fields for metadata encryption and recovery records.
+
 ## 1.7.0
 
 - Added `compressed`/`ultra` mode for strongest ratio-focused archive creation.
