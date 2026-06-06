@@ -34,6 +34,10 @@ public sealed class UniversalArchiveService
         CancellationToken cancellationToken = default)
     {
         var writeKind = ArchiveFormatDetector.DetectWriteKind(outputArchivePath);
+        if (options.Mode == Laplace.Core.Enums.CompressionMode.Extreme && writeKind != SupportedArchiveKind.Lpc)
+        {
+            throw new NotSupportedException("Extreme mode is supported for LPC archives only.");
+        }
         if (options.Password?.HasKeyfile == true && writeKind != SupportedArchiveKind.Lpc)
         {
             throw new NotSupportedException("Keyfiles are supported for LPC archives only.");
@@ -41,6 +45,14 @@ public sealed class UniversalArchiveService
         if (writeKind != SupportedArchiveKind.Lpc && (options.EncryptMetadata || options.RecoveryPercent > 0))
         {
             throw new NotSupportedException("Metadata encryption and recovery records are supported for LPC archives only.");
+        }
+        if (options.VolumeSizeBytes is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options.VolumeSizeBytes), "Volume size must be greater than zero.");
+        }
+        if (writeKind == SupportedArchiveKind.Zip && options.VolumeSizeBytes is not null)
+        {
+            throw new NotSupportedException("Multi-volume ZIP creation is not supported. Use .7z or .rar output.");
         }
 
         switch (writeKind)

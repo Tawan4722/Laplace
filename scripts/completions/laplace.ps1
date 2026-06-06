@@ -15,8 +15,9 @@ Register-ArgumentCompleter -CommandName laplace -ScriptBlock {
         '--overwrite', '--name', '--text', '--set', '--file', '--clear', '--keyfile',
         '--volume-size', '--recovery-percent', '--size', '--count', '--cli-path'
     )
+    $modes = @('fast', 'balanced', 'maximum', 'intensive', 'compressed', 'extreme', 'auto')
 
-    @($commands + $options) |
+    @($commands + $options + $modes) |
         Where-Object { $_ -like "$wordToComplete*" } |
         ForEach-Object {
             [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)

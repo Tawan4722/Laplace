@@ -36,6 +36,11 @@ public sealed class ArchiveWriter
             .ThenBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        if (options.Mode == CompressionMode.Extreme)
+        {
+            ExtremeCompressionPolicy.Apply(options);
+        }
+
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputArchivePath))!);
 
         var header = new ArchiveHeader
@@ -291,7 +296,7 @@ public sealed class ArchiveWriter
                 }
 
                 incrementalHash.AppendData(buffer, 0, bytesRead);
-                var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options.Mode, buffer, bytesRead);
+                var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(sourceEntry.RelativePath, options, buffer, bytesRead);
                 var compressor = _compressorRegistry.GetCompressor(outputMethod);
                 methodsUsed.Add(outputMethod);
 
@@ -415,7 +420,7 @@ public sealed class ArchiveWriter
                         var hintPath = blockHintPath;
                         var streamOffset = blockStreamOffset;
                         pendingBlocks.Enqueue(Task.Run(
-                            () => PrepareSolidBlock(blockId, hintPath, options.Mode, blockData, streamOffset),
+                            () => PrepareSolidBlock(blockId, hintPath, options, blockData, streamOffset),
                             cancellationToken));
                         if (pendingBlocks.Count >= maxPendingBlocks)
                         {
@@ -452,7 +457,7 @@ public sealed class ArchiveWriter
             var hintPath = blockHintPath;
             var streamOffset = blockStreamOffset;
             pendingBlocks.Enqueue(Task.Run(
-                () => PrepareSolidBlock(blockId, hintPath, options.Mode, blockData, streamOffset),
+                () => PrepareSolidBlock(blockId, hintPath, options, blockData, streamOffset),
                 cancellationToken));
         }
 
@@ -473,12 +478,12 @@ public sealed class ArchiveWriter
     private PreparedSolidBlock PrepareSolidBlock(
         long blockId,
         string blockHintPath,
-        CompressionMode mode,
+        CreateArchiveOptions options,
         byte[] blockData,
         long originalStreamOffset)
     {
-        var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(blockHintPath, mode, blockData, blockData.Length);
-        var compressor = _compressorRegistry.GetCompressor(outputMethod);
+        var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(blockHintPath, options, blockData, blockData.Length);
+        var compressor = GetCompressorForCompression(outputMethod, options);
         return new PreparedSolidBlock(
             new BlockEntryRecord
             {
@@ -610,19 +615,19 @@ public sealed class ArchiveWriter
         {
             SolidMode.On => fileCount > 1,
             SolidMode.Off => false,
-            _ => fileCount > 1 && options.Mode is CompressionMode.Balanced or CompressionMode.Maximum or CompressionMode.Intensive or CompressionMode.Compressed
+            _ => fileCount > 1 && options.Mode is CompressionMode.Balanced or CompressionMode.Maximum or CompressionMode.Intensive or CompressionMode.Compressed or CompressionMode.Extreme
         };
     }
 
-    private byte[] CompressBlock(CompressionMethod preferredMethod, ReadOnlySpan<byte> blockData)
+    private byte[] CompressBlock(CompressionMethod preferredMethod, ReadOnlySpan<byte> blockData, CreateArchiveOptions options)
     {
-        var compressor = _compressorRegistry.GetCompressor(preferredMethod);
+        var compressor = GetCompressorForCompression(preferredMethod, options);
         return compressor.Compress(blockData);
     }
 
     private (CompressionMethod Method, byte[] Bytes, bool IsRaw) SelectAndCompressBlock(
         string relativePath,
-        CompressionMode mode,
+        CreateArchiveOptions options,
         byte[] blockBuffer,
         int blockLength)
     {
@@ -632,9 +637,12 @@ public sealed class ArchiveWriter
             return (CompressionMethod.Raw, [], true);
         }
 
-        var sample = blockData[..Math.Min(blockData.Length, 64 * 1024)];
+        var sampleBytes = options.Mode == CompressionMode.Extreme
+            ? BuildExtremeSample(blockData)
+            : blockData[..Math.Min(blockData.Length, 64 * 1024)].ToArray();
+        var sample = sampleBytes.AsSpan();
         var analysis = _adaptiveCompressionEngine.Analyze(relativePath, sample);
-        var bestMethod = SelectPreferredMethod(mode, analysis, sample);
+        var bestMethod = SelectPreferredMethod(options.Mode, analysis, sample);
 
         if (bestMethod == CompressionMethod.Raw)
         {
@@ -644,7 +652,7 @@ public sealed class ArchiveWriter
         byte[] compressed;
         try
         {
-            compressed = CompressBlock(bestMethod, blockData);
+            compressed = CompressBlock(bestMethod, blockData, options);
         }
         catch
         {
@@ -657,6 +665,34 @@ public sealed class ArchiveWriter
         }
 
         return (bestMethod, compressed, false);
+    }
+
+    private IBlockCompressor GetCompressorForCompression(CompressionMethod method, CreateArchiveOptions options)
+    {
+        if (method == CompressionMethod.LzmaMax &&
+            options.LzmaDictionarySizeBytes is { } dictionarySize &&
+            _compressorRegistry is IConfigurableCompressorRegistry configurableRegistry)
+        {
+            return configurableRegistry.GetLzmaCompressor(dictionarySize, options.LzmaFastBytes);
+        }
+
+        return _compressorRegistry.GetCompressor(method);
+    }
+
+    private static byte[] BuildExtremeSample(ReadOnlySpan<byte> blockData)
+    {
+        const int windowSize = 64 * 1024;
+        if (blockData.Length <= windowSize * 3)
+        {
+            return blockData.ToArray();
+        }
+
+        var sample = new byte[windowSize * 3];
+        blockData[..windowSize].CopyTo(sample);
+        var middleStart = (blockData.Length / 2) - (windowSize / 2);
+        blockData.Slice(middleStart, windowSize).CopyTo(sample.AsSpan(windowSize));
+        blockData[^windowSize..].CopyTo(sample.AsSpan(windowSize * 2));
+        return sample;
     }
 
     private CompressionMethod SelectPreferredMethod(CompressionMode mode, CompressionAnalysis analysis, ReadOnlySpan<byte> sample)
@@ -707,6 +743,11 @@ public sealed class ArchiveWriter
             {
                 // Skip unavailable methods and continue evaluating.
             }
+        }
+
+        if (mode == CompressionMode.Extreme && bestMethod == CompressionMethod.Raw)
+        {
+            return CompressionMethod.LzmaMax;
         }
 
         return bestMethod;

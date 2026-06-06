@@ -17,6 +17,7 @@ public sealed class CreateArchiveOptions
 
     public CompressionMode Mode { get; set; } = CompressionMode.Balanced;
     public int BlockSizeBytes { get; set; } = 8 * 1024 * 1024;
+    public bool BlockSizeExplicitlySet { get; set; }
     public SolidMode SolidMode { get; set; } = SolidMode.Auto;
     public bool VerifyAfterCompression { get; set; } = true;
     public int Threads { get; set; } = Environment.ProcessorCount;
@@ -31,4 +32,7 @@ public sealed class CreateArchiveOptions
     public bool EncryptMetadata { get; set; }
     public long? VolumeSizeBytes { get; set; }
     public int RecoveryPercent { get; set; }
+    internal long? AvailableCompressionMemoryBytes { get; set; }
+    internal int? LzmaDictionarySizeBytes { get; set; }
+    internal int LzmaFastBytes { get; set; } = 128;
 }

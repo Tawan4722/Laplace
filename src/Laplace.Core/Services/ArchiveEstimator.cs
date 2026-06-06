@@ -32,6 +32,10 @@ public sealed class ArchiveEstimator
         {
             throw new InvalidOperationException("No input files or folders were found.");
         }
+        if (options.Mode == CompressionMode.Extreme)
+        {
+            ExtremeCompressionPolicy.Apply(options);
+        }
 
         var files = scanned.Where(x => !x.IsDirectory).ToList();
         var folders = scanned.Count - files.Count;
@@ -82,7 +86,9 @@ public sealed class ArchiveEstimator
             LikelyMethods = methods.Count == 0
                 ? [CompressionMethod.Raw.ToString()]
                 : methods.OrderBy(x => (int)x).Select(x => x.ToString()).ToArray(),
-            Notes = "Estimate is based on sampled trial compression and includes approximate LPC metadata overhead."
+            Notes = options.Mode == CompressionMode.Extreme
+                ? "Extreme estimate uses larger sampled trials; gains from long-distance matches remain approximate. LPC metadata overhead is included."
+                : "Estimate is based on sampled trial compression and includes approximate LPC metadata overhead."
         };
     }
 
@@ -97,7 +103,11 @@ public sealed class ArchiveEstimator
             return new FileEstimate(0, 0, new HashSet<CompressionMethod> { CompressionMethod.Raw });
         }
 
-        var samples = await ReadSamplesAsync(file.FullPath, fileSize, cancellationToken).ConfigureAwait(false);
+        var samples = await ReadSamplesAsync(
+            file.FullPath,
+            fileSize,
+            options.Mode == CompressionMode.Extreme ? 256 * 1024 : SampleSizeBytes,
+            cancellationToken).ConfigureAwait(false);
         if (samples.Count == 0)
         {
             return new FileEstimate(fileSize, 0, new HashSet<CompressionMethod> { CompressionMethod.Raw });
@@ -179,9 +189,10 @@ public sealed class ArchiveEstimator
     private static async Task<IReadOnlyList<byte[]>> ReadSamplesAsync(
         string path,
         long fileSize,
+        int sampleSizeBytes,
         CancellationToken cancellationToken)
     {
-        var sampleLength = (int)Math.Min(SampleSizeBytes, fileSize);
+        var sampleLength = (int)Math.Min(sampleSizeBytes, fileSize);
         var offsets = GetSampleOffsets(fileSize, sampleLength).ToArray();
         var samples = new List<byte[]>(offsets.Length);
         await using var stream = new FileStream(
@@ -189,7 +200,7 @@ public sealed class ArchiveEstimator
             FileMode.Open,
             FileAccess.Read,
             FileShare.Read,
-            SampleSizeBytes,
+            sampleSizeBytes,
             FileOptions.Asynchronous | FileOptions.SequentialScan);
 
         foreach (var offset in offsets)

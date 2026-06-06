@@ -7,7 +7,22 @@ namespace Laplace.Compression.Compressors;
 public sealed class LzmaCompressor : IBlockCompressor
 {
     private const int PropertyLengthBytes = 5;
-    private static readonly LzmaEncoderProperties EncoderProperties = new(false, 1 << 24, 128);
+    private readonly LzmaEncoderProperties _encoderProperties;
+
+    public LzmaCompressor(int dictionarySizeBytes = 1 << 24, int fastBytes = 128)
+    {
+        if (dictionarySizeBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(dictionarySizeBytes));
+        }
+
+        if (fastBytes is < 5 or > 273)
+        {
+            throw new ArgumentOutOfRangeException(nameof(fastBytes), "LZMA fast bytes must be between 5 and 273.");
+        }
+
+        _encoderProperties = new LzmaEncoderProperties(false, dictionarySizeBytes, fastBytes);
+    }
 
     public CompressionMethod Method => CompressionMethod.LzmaMax;
     public int Level => 9;
@@ -15,7 +30,7 @@ public sealed class LzmaCompressor : IBlockCompressor
     public byte[] Compress(ReadOnlySpan<byte> data)
     {
         using var output = new MemoryStream();
-        using (var encoder = LzmaStream.Create(EncoderProperties, false, output))
+        using (var encoder = LzmaStream.Create(_encoderProperties, false, output))
         {
             output.Write(encoder.Properties, 0, encoder.Properties.Length);
             var bytes = data.ToArray();

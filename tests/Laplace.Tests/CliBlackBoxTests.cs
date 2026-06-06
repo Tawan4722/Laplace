@@ -16,6 +16,7 @@ public sealed class CliBlackBoxTests
         Assert.Contains("laplace compress", result.StandardOutput);
         Assert.Contains("intensive", result.StandardOutput);
         Assert.Contains("compressed", result.StandardOutput);
+        Assert.Contains("extreme", result.StandardOutput);
     }
 
     [Fact]
@@ -537,6 +538,58 @@ public sealed class CliBlackBoxTests
 
             Assert.Equal(1, result.ExitCode);
             Assert.Contains("Multiple input paths require an explicit output archive path", result.StandardError);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task Compress_LpcVolumeSize_ReturnsClearUnsupportedFailure()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "payload.txt");
+            var archivePath = Path.Combine(root, "payload.lpc");
+            await File.WriteAllTextAsync(sourceFile, "multi-volume payload");
+
+            var result = await RunLaplaceAsync("compress", sourceFile, archivePath, "--volume-size", "1M", "--no-verify");
+
+            Assert.Equal(2, result.ExitCode);
+            Assert.Contains("LPC multi-volume output is reserved", result.StandardError);
+            Assert.False(File.Exists(archivePath));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task ExtremeMode_RejectsExplicitBlockSizeBeforeCompression()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "payload.txt");
+            var archivePath = Path.Combine(root, "payload.lpc");
+            await File.WriteAllTextAsync(sourceFile, "extreme payload");
+
+            var result = await RunLaplaceAsync(
+                "compress",
+                sourceFile,
+                archivePath,
+                "--mode",
+                "extreme",
+                "--block-size",
+                "64M",
+                "--no-verify");
+
+            Assert.Equal(2, result.ExitCode);
+            Assert.Contains("chooses block size automatically", result.StandardError);
+            Assert.False(File.Exists(archivePath));
         }
         finally
         {

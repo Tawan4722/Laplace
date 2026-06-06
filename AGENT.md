@@ -69,9 +69,11 @@ Current compression modes:
 - `maximum`
 - `intensive`
 - `compressed`
+- `extreme`
 - `auto`
 
 Important implementation fact: `LZMA_MAX` is now backed by a real LZMA block compressor. It is no longer aliased to Zstd.
+`extreme` is LPC-only and automatically selects 64-256 MiB blocks with 32-128 MiB LZMA dictionaries from available memory. It forces one compression worker and rejects explicit block sizes.
 
 Built-in or optional methods:
 

@@ -33,6 +33,11 @@ public sealed class SevenZipArchiveWriter
             return;
         }
 
+        if (options.VolumeSizeBytes is not null)
+        {
+            throw new NotSupportedException("Multi-volume 7z creation requires installed 7-Zip command-line tools.");
+        }
+
         if (options.Password is not null)
         {
             throw new NotSupportedException("Encrypted 7z creation requires installed 7-Zip command-line tools. Install 7-Zip or create an encrypted .lpc/.zip archive instead.");
@@ -101,6 +106,7 @@ public sealed class SevenZipArchiveWriter
     private static bool ShouldUseExternalSevenZip(CreateArchiveOptions options)
     {
         return options.Password is not null ||
+            options.VolumeSizeBytes is not null ||
             options.Mode is CompressionMode.Maximum or CompressionMode.Intensive or CompressionMode.Compressed ||
             options.SolidMode == SolidMode.On;
     }
@@ -117,6 +123,10 @@ public sealed class SevenZipArchiveWriter
         if (!string.IsNullOrWhiteSpace(outputDirectory))
         {
             Directory.CreateDirectory(outputDirectory);
+        }
+        if (options.VolumeSizeBytes is not null)
+        {
+            ArchiveVolumePathHelper.DeleteExistingVolumes(outputArchivePath);
         }
 
         var stagingRoot = Path.Combine(Path.GetTempPath(), $"laplace-7z-{Guid.NewGuid():N}");
@@ -201,30 +211,13 @@ public sealed class SevenZipArchiveWriter
             CreateNoWindow = true
         };
 
-        startInfo.ArgumentList.Add("a");
-        startInfo.ArgumentList.Add("-t7z");
-        startInfo.ArgumentList.Add($"-mx={MapCompressionLevel(options.Mode)}");
-        startInfo.ArgumentList.Add("-m0=lzma2");
-        startInfo.ArgumentList.Add($"-mmt={Math.Max(1, options.Threads)}");
-        startInfo.ArgumentList.Add(GetSolidSwitch(options));
-        startInfo.ArgumentList.Add("-y");
-        startInfo.ArgumentList.Add("-bd");
-        if (options.Mode == CompressionMode.Compressed)
+        var entries = Directory.EnumerateFileSystemEntries(stagingRoot)
+            .Select(Path.GetFileName)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!);
+        foreach (var argument in BuildSevenZipArguments(outputArchivePath, options, entries))
         {
-            startInfo.ArgumentList.Add("-mfb=273");
-            startInfo.ArgumentList.Add("-md=256m");
-        }
-
-        if (options.Password is not null)
-        {
-            startInfo.ArgumentList.Add($"-p{options.Password.Password}");
-            startInfo.ArgumentList.Add("-mhe=on");
-        }
-
-        startInfo.ArgumentList.Add(outputArchivePath);
-        foreach (var entry in Directory.EnumerateFileSystemEntries(stagingRoot).Select(Path.GetFileName).Where(x => !string.IsNullOrWhiteSpace(x)))
-        {
-            startInfo.ArgumentList.Add(entry!);
+            startInfo.ArgumentList.Add(argument);
         }
 
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start 7-Zip creation process.");
@@ -238,6 +231,45 @@ public sealed class SevenZipArchiveWriter
                 ? $"7-Zip creation failed with exit code {process.ExitCode}."
                 : $"7-Zip creation failed with exit code {process.ExitCode}: {output}");
         }
+    }
+
+    internal static IReadOnlyList<string> BuildSevenZipArguments(
+        string outputArchivePath,
+        CreateArchiveOptions options,
+        IEnumerable<string> entries)
+    {
+        var arguments = new List<string>
+        {
+            "a",
+            "-t7z",
+            $"-mx={MapCompressionLevel(options.Mode)}",
+            "-m0=lzma2",
+            $"-mmt={Math.Max(1, options.Threads)}",
+            GetSolidSwitch(options),
+            "-y",
+            "-bd"
+        };
+
+        if (options.Mode == CompressionMode.Compressed)
+        {
+            arguments.Add("-mfb=273");
+            arguments.Add("-md=256m");
+        }
+
+        if (options.Password is not null)
+        {
+            arguments.Add($"-p{options.Password.Password}");
+            arguments.Add("-mhe=on");
+        }
+
+        if (options.VolumeSizeBytes is { } volumeSize)
+        {
+            arguments.Add($"-v{volumeSize}b");
+        }
+
+        arguments.Add(outputArchivePath);
+        arguments.AddRange(entries);
+        return arguments;
     }
 
     private static string GetSolidSwitch(CreateArchiveOptions options)

@@ -6,7 +6,9 @@ using Laplace.Core.Enums;
 using Laplace.Core.Models;
 using Laplace.Core.Security;
 using Laplace.Core.Services;
+using Laplace.ShellIntegration;
 using System.Security.Cryptography;
+using System.Runtime.Versioning;
 using System.Text;
 using ZipEntry = ICSharpCode.SharpZipLib.Zip.ZipEntry;
 using ZipOutputStream = ICSharpCode.SharpZipLib.Zip.ZipOutputStream;
@@ -203,6 +205,28 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public async Task Estimate_ExtremeMode_AppliesAutomaticResourcePolicy()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "repeated.bin");
+        await File.WriteAllBytesAsync(sourceFile, Enumerable.Repeat((byte)'A', 1024 * 1024).ToArray());
+        var options = new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Extreme,
+            AvailableCompressionMemoryBytes = 256L * 1024 * 1024
+        };
+
+        var estimate = await new UniversalArchiveService(new CompressorRegistry())
+            .EstimateAsync([sourceFile], options);
+
+        Assert.Equal(64 * 1024 * 1024, options.BlockSizeBytes);
+        Assert.Equal(1, options.Threads);
+        Assert.Equal(32 * 1024 * 1024, options.LzmaDictionarySizeBytes);
+        Assert.Contains("long-distance matches", estimate.Notes);
+        Assert.True(estimate.EstimatedCompressedSize < estimate.OriginalSize);
+    }
+
+    [Fact]
     public void IntensiveMode_UsesRatioFocusedCandidates_EvenForAlreadyCompressedInputs()
     {
         var engine = new AdaptiveCompressionEngine();
@@ -249,6 +273,96 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public void ExtremeMode_UsesBuiltInRatioOnlyCandidates()
+    {
+        var engine = new AdaptiveCompressionEngine();
+        var analysis = new CompressionAnalysis
+        {
+            FileTypeCategory = FileTypeCategory.Binary,
+            Entropy = 7.9,
+            LikelyAlreadyCompressed = true
+        };
+
+        Assert.Equal(
+            [
+                CompressionMethod.LzmaMax,
+                CompressionMethod.ZstdHigh,
+                CompressionMethod.Blosc2,
+                CompressionMethod.DeflateFallback,
+                CompressionMethod.Raw
+            ],
+            engine.GetCandidates(CompressionMode.Extreme, analysis));
+        Assert.Equal(
+            0.75,
+            engine.Score(CompressionMode.Extreme, CompressionMethod.LzmaMax, analysis, 0.25, 0.01, 1.0),
+            precision: 6);
+    }
+
+    [Theory]
+    [InlineData(1024, 256, 128)]
+    [InlineData(512, 128, 64)]
+    [InlineData(256, 64, 32)]
+    public void ExtremePolicy_SelectsMemoryTierAndSingleWorker(int availableMiB, int blockMiB, int dictionaryMiB)
+    {
+        var options = new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Extreme,
+            AvailableCompressionMemoryBytes = availableMiB * 1024L * 1024
+        };
+
+        var settings = ExtremeCompressionPolicy.Apply(options);
+
+        Assert.Equal(blockMiB * 1024 * 1024, settings.BlockSizeBytes);
+        Assert.Equal(dictionaryMiB * 1024 * 1024, settings.DictionarySizeBytes);
+        Assert.Equal(1, settings.Threads);
+        Assert.Equal(1, options.Threads);
+        Assert.Equal(273, options.LzmaFastBytes);
+    }
+
+    [Fact]
+    public void ExtremePolicy_RejectsInsufficientMemoryAndExplicitBlockSize()
+    {
+        var lowMemory = new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Extreme,
+            AvailableCompressionMemoryBytes = 255L * 1024 * 1024
+        };
+        var explicitBlock = new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Extreme,
+            BlockSizeExplicitlySet = true,
+            AvailableCompressionMemoryBytes = 1024L * 1024 * 1024
+        };
+
+        Assert.Throws<InvalidOperationException>(() => ExtremeCompressionPolicy.Resolve(lowMemory));
+        Assert.Throws<InvalidOperationException>(() => ExtremeCompressionPolicy.Resolve(explicitBlock));
+    }
+
+    [Fact]
+    public void ConfigurableLzma_StoresSelectedDictionaryInCoderProperties()
+    {
+        const int dictionarySize = 32 * 1024 * 1024;
+        var compressed = new Laplace.Compression.Compressors.LzmaCompressor(dictionarySize, 273)
+            .Compress(Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("extreme lzma ", 1000))));
+
+        Assert.True(compressed.Length > 5);
+        Assert.Equal(dictionarySize, BitConverter.ToInt32(compressed, 1));
+    }
+
+    [Theory]
+    [InlineData("%1")]
+    [InlineData("%V")]
+    [SupportedOSPlatform("windows")]
+    public void UltraRatioShellVerb_UsesExtremeVerifiedCompression(string targetPlaceholder)
+    {
+        var verbs = ShellIntegrationManager.BuildCreateVerbs("\"laplace.exe\"", "\"laplace-gui.exe\"", targetPlaceholder);
+        var ultra = Assert.Single(verbs, verb => verb.Title == "Ultra Ratio");
+
+        Assert.Equal("create_ultra_ratio", ultra.Name);
+        Assert.Equal($"\"laplace.exe\" compress-beside \"{targetPlaceholder}\" --mode extreme --verify", ultra.Command);
+    }
+
+    [Fact]
     public void RarCompressedMode_UsesRar5SolidMaxCompression()
     {
         var args = RarArchiveWriter.BuildRarArguments(
@@ -288,6 +402,77 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public void RarVolumeSize_UsesNativeMultiVolumeSwitch()
+    {
+        var args = RarArchiveWriter.BuildRarArguments(
+            "archive.rar",
+            new CreateArchiveOptions
+            {
+                VolumeSizeBytes = 700L * 1024 * 1024
+            },
+            ["src"]);
+
+        Assert.Contains("-v734003200b", args);
+    }
+
+    [Fact]
+    public void SevenZipVolumeSize_UsesNativeMultiVolumeSwitch()
+    {
+        var args = SevenZipArchiveWriter.BuildSevenZipArguments(
+            "archive.7z",
+            new CreateArchiveOptions
+            {
+                VolumeSizeBytes = 64L * 1024 * 1024
+            },
+            ["src"]);
+
+        Assert.Contains("-v67108864b", args);
+    }
+
+    [Fact]
+    public async Task ZipVolumeSize_IsRejectedClearly()
+    {
+        var archives = new UniversalArchiveService(new CompressorRegistry());
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(() => archives.CompressAsync(
+            [],
+            "archive.zip",
+            new CreateArchiveOptions
+            {
+                VolumeSizeBytes = 1024
+            }));
+
+        Assert.Contains("Multi-volume ZIP", exception.Message);
+    }
+
+    [Fact]
+    public void ArchiveVolumePathHelper_FindsSortsAndDeletesOnlyNumericVolumes()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var outputPath = Path.Combine(root, "backup.7z");
+            var volume1 = $"{outputPath}.001";
+            var volume2 = $"{outputPath}.002";
+            var unrelated = $"{outputPath}.notes";
+            File.WriteAllText(volume2, "two");
+            File.WriteAllText(unrelated, "keep");
+            File.WriteAllText(volume1, "one");
+
+            Assert.Equal([volume1, volume2], ArchiveVolumePathHelper.FindVolumes(outputPath));
+
+            ArchiveVolumePathHelper.DeleteExistingVolumes(outputPath);
+
+            Assert.False(File.Exists(volume1));
+            Assert.False(File.Exists(volume2));
+            Assert.True(File.Exists(unrelated));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Blosc2Compressor_RoundTripsStructuredBinaryData()
     {
         var data = new byte[256 * 1024];
@@ -316,6 +501,99 @@ public sealed class ArchiveRoundTripTests
         Assert.True(compressed.Length > 5);
         Assert.NotEqual(0x28B52FFDu, BitConverter.ToUInt32(compressed, 0));
         Assert.Equal(data, decompressed);
+    }
+
+    [Fact]
+    public async Task ExtremeLpc_LongDistanceReuse_BeatsCompressedModeAndRoundTrips()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourcePath = Path.Combine(root, "distant-reuse.bin");
+            var compressedPath = Path.Combine(root, "compressed.lpc");
+            var extremePath = Path.Combine(root, "extreme.lpc");
+            var extractPath = Path.Combine(root, "out");
+            var repeated = new byte[3 * 1024 * 1024];
+            var filler = new byte[18 * 1024 * 1024];
+            new Random(12345).NextBytes(repeated);
+            new Random(67890).NextBytes(filler);
+            await using (var output = File.Create(sourcePath))
+            {
+                await output.WriteAsync(repeated);
+                await output.WriteAsync(filler);
+                await output.WriteAsync(repeated);
+            }
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            await service.CompressAsync([sourcePath], compressedPath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Compressed,
+                BlockSizeBytes = 8 * 1024 * 1024,
+                VerifyAfterCompression = false
+            });
+            await service.CompressAsync([sourcePath], extremePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Extreme,
+                AvailableCompressionMemoryBytes = 256L * 1024 * 1024,
+                VerifyAfterCompression = false
+            });
+
+            Assert.True(
+                new FileInfo(extremePath).Length < new FileInfo(compressedPath).Length - (1024 * 1024),
+                $"Extreme={new FileInfo(extremePath).Length}, compressed={new FileInfo(compressedPath).Length}");
+            Assert.Equal(1, new ArchiveReader().ReadHeaderOnly(extremePath).FormatVersion);
+
+            await service.ExtractAsync(extremePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+            Assert.Equal(
+                await File.ReadAllBytesAsync(sourcePath),
+                await File.ReadAllBytesAsync(Path.Combine(extractPath, "distant-reuse.bin")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtremeLpc_HighEntropyDataFallsBackToRaw()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourcePath = Path.Combine(root, "random.bin");
+            var archivePath = Path.Combine(root, "random.lpc");
+            var data = new byte[1024 * 1024];
+            new Random(24680).NextBytes(data);
+            await File.WriteAllBytesAsync(sourcePath, data);
+
+            var archive = await new ArchiveWriter(new CompressorRegistry()).CreateAsync(
+                [sourcePath],
+                archivePath,
+                new CreateArchiveOptions
+                {
+                    Mode = CompressionMode.Extreme,
+                    AvailableCompressionMemoryBytes = 256L * 1024 * 1024,
+                    VerifyAfterCompression = false
+                });
+
+            Assert.All(archive.BlockEntries, block => Assert.True(block.IsRaw));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtremeMode_RejectsNonLpcOutput()
+    {
+        var service = new UniversalArchiveService(new CompressorRegistry());
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(() => service.CompressAsync(
+            [],
+            "archive.7z",
+            new CreateArchiveOptions { Mode = CompressionMode.Extreme }));
+
+        Assert.Contains("LPC archives only", exception.Message);
     }
 
     [Fact]

@@ -4,7 +4,7 @@ using Laplace.Core.Enums;
 
 namespace Laplace.Compression;
 
-public sealed class CompressorRegistry : ICompressorRegistry
+public sealed class CompressorRegistry : ICompressorRegistry, IConfigurableCompressorRegistry
 {
     private readonly Dictionary<CompressionMethod, IBlockCompressor> _compressors;
 
@@ -34,6 +34,11 @@ public sealed class CompressorRegistry : ICompressorRegistry
         }
 
         throw new NotSupportedException($"Compression method {method} is not available in this build.");
+    }
+
+    public IBlockCompressor GetLzmaCompressor(int dictionarySizeBytes, int fastBytes)
+    {
+        return new LzmaCompressor(dictionarySizeBytes, fastBytes);
     }
 
     private void TryRegisterExternal(CompressionMethod method, string compressEnvironmentVariable, string decompressEnvironmentVariable)

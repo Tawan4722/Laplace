@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$InputPath,
 
-    [ValidateSet("fast", "balanced", "maximum", "intensive", "compressed", "auto")]
+    [ValidateSet("fast", "balanced", "maximum", "intensive", "compressed", "extreme", "auto")]
     [string]$LaplaceMode = "fast",
 
     [string]$SevenZipExe,

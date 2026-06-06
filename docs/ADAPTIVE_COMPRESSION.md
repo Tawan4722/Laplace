@@ -4,7 +4,7 @@
 
 The adaptive selector uses:
 
-- compression mode (`fast`, `balanced`, `maximum`, `intensive`, `compressed`, `auto`)
+- compression mode (`fast`, `balanced`, `maximum`, `intensive`, `compressed`, `extreme`, `auto`)
 - file extension hints
 - entropy estimate from sampled bytes
 - repetition estimate from sampled bytes
@@ -18,6 +18,7 @@ The adaptive selector uses:
    - `maximum` -> prioritize `BSC` when configured, then `LZMA_MAX` / `ZSTD_HIGH`
    - `intensive` -> try the strongest available candidates, including configured `ZPAQ` / `BSC`, even for data that looks pre-compressed
    - `compressed` -> strongest ratio-first profile; for `.7z` output, prefer installed 7-Zip solid LZMA2; for `.rar`, prefer installed WinRAR/RAR with RAR5 solid best compression
+   - `extreme` -> LPC-only, single-worker large-block compression with an automatically selected 32-128 MiB LZMA dictionary and strict ratio-first scoring
    - `auto` -> entropy/repetition/file-type-based candidate set
 3. Every block is checked after compression:
    - if `compressed_size >= original_size`, store block as `RAW`.
@@ -47,6 +48,7 @@ Weights are implemented and can be tuned in code.
 - `maximum`: favor smaller size
 - `intensive`: spend more CPU on ratio-focused candidate testing
 - `compressed`: strongest available ratio-first profile
+- `extreme`: maximum practical native LPC ratio, using up to approximately 1 GiB of compression memory
 - `auto`: choose per block/file using content signals
 
 ## Advanced Codec Candidates

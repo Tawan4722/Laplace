@@ -4,6 +4,13 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.9.0 - 2026-06-06
+
+- Added true multi-volume `.7z` and `.rar` creation through `--volume-size` and desktop creation presets.
+- Added multi-volume output discovery, aggregate size reporting, and first-volume verification in the CLI.
+- Added LPC-only `extreme` compression with automatic memory tiers, large LZMA dictionaries, ratio-first selection, and single-worker memory bounds.
+- Added the Explorer `Ultra Ratio` action for verified extreme-mode LPC creation.
+
 ## 1.8.0 - 2026-06-06
 
 - Added LPCv5 versioned key derivation with Argon2id defaults and backward-compatible PBKDF2 reads.

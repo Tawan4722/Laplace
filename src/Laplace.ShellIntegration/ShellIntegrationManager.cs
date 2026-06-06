@@ -159,10 +159,22 @@ public sealed class ShellIntegrationManager
             menuKey?.SetValue("AppliesTo", appliesTo);
         }
 
-        RegisterCascadeVerb(menuKey, "estimate", "Estimate archive size", $"{quotedGui} --estimate \"{targetPlaceholder}\"");
-        RegisterCascadeVerb(menuKey, "create_options", "Create archive...", $"{quotedGui} --add \"{targetPlaceholder}\"");
-        RegisterCascadeVerb(menuKey, "create_quick", "Create .lpc beside item", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced");
-        RegisterCascadeVerb(menuKey, "create_quick_verified", "Create verified .lpc", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced --verify");
+        foreach (var verb in BuildCreateVerbs(quotedCli, quotedGui, targetPlaceholder))
+        {
+            RegisterCascadeVerb(menuKey, verb.Name, verb.Title, verb.Command);
+        }
+    }
+
+    internal static IReadOnlyList<ShellCreateVerb> BuildCreateVerbs(string quotedCli, string quotedGui, string targetPlaceholder)
+    {
+        return
+        [
+            new("estimate", "Estimate archive size", $"{quotedGui} --estimate \"{targetPlaceholder}\""),
+            new("create_options", "Create archive...", $"{quotedGui} --add \"{targetPlaceholder}\""),
+            new("create_quick", "Create .lpc beside item", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced"),
+            new("create_quick_verified", "Create verified .lpc", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced --verify"),
+            new("create_ultra_ratio", "Ultra Ratio", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode extreme --verify")
+        ];
     }
 
     private static void ConfigureCascadeRoot(RegistryKey? menuKey, string quotedGui)
@@ -246,3 +258,5 @@ public sealed class ShellIntegrationStatus
     public required string OpenCommand { get; init; }
     public int RegisteredLaplaceVerbCount { get; init; }
 }
+
+internal sealed record ShellCreateVerb(string Name, string Title, string Command);

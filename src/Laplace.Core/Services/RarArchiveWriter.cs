@@ -32,6 +32,10 @@ public sealed class RarArchiveWriter
         {
             Directory.CreateDirectory(outputDirectory);
         }
+        if (options.VolumeSizeBytes is not null)
+        {
+            ArchiveVolumePathHelper.DeleteExistingVolumes(outputArchivePath);
+        }
 
         var stagingRoot = Path.Combine(Path.GetTempPath(), $"laplace-rar-{Guid.NewGuid():N}");
         try
@@ -178,6 +182,11 @@ public sealed class RarArchiveWriter
         if (options.Password is not null)
         {
             arguments.Add($"-hp{options.Password.Password}");
+        }
+
+        if (options.VolumeSizeBytes is { } volumeSize)
+        {
+            arguments.Add($"-v{volumeSize}b");
         }
 
         arguments.Add(outputArchivePath);

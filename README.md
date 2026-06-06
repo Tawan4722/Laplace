@@ -9,7 +9,7 @@ The native `.lpc` format is implemented in this repository. Laplace is not a wra
 ## What It Does
 
 - Creates native `.lpc` archives.
-- Creates `.zip`, `.7z`, and `.rar` archives.
+- Creates `.zip`, `.7z`, and `.rar` archives, including true multi-volume `.7z` and `.rar` output through installed tools.
 - Extracts, lists, inspects, and tests common archive formats, including CAB packages.
 - Adds, freshens, deletes, renames, comments, locks, finds, views, and repairs supported archives.
 - Supports encrypted `.lpc` archives and password-aware ZIP workflows.
@@ -73,7 +73,7 @@ Unsupported formats fail with a clear error. For some non-password external arch
 
 New encrypted LPC archives use Argon2id by default. Older PBKDF2-HMAC-SHA256 archives remain readable, and LPCv5 records the selected KDF and its bounded parameters explicitly.
 
-Payload encryption protects compressed block bytes. With `--hide-names`, LPCv6 also encrypts and authenticates file and block tables, so listing and archive details require the password. LPCv7 recovery records add striped Reed-Solomon parity that `laplace repair` can use without decrypting the archive. Multi-volume and SFX output remain reserved.
+Payload encryption protects compressed block bytes. With `--hide-names`, LPCv6 also encrypts and authenticates file and block tables, so listing and archive details require the password. LPCv7 recovery records add striped Reed-Solomon parity that `laplace repair` can use without decrypting the archive. Native LPC multi-volume and SFX output remain reserved.
 
 See [docs/LPC_FORMAT.md](docs/LPC_FORMAT.md) for the binary layout.
 
@@ -97,6 +97,7 @@ Modes:
 - `maximum`: size-focused
 - `intensive`: strongest candidate set and ratio-focused scoring
 - `compressed`: strongest ratio-first profile; for `.7z`, uses installed 7-Zip with solid LZMA2 when available; for `.rar`, uses installed WinRAR/RAR with RAR5, solid mode, and best compression
+- `extreme`: LPC-only maximum practical ratio with automatic 64-256 MiB blocks, 32-128 MiB LZMA dictionaries, and one compression worker
 - `auto`: content-based candidate set
 
 Methods:
@@ -142,8 +143,9 @@ laplace <command>
 Common commands:
 
 ```powershell
-laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] --mode fast|balanced|maximum|intensive|compressed|auto
+laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] --mode fast|balanced|maximum|intensive|compressed|extreme|auto [--volume-size 700M]
 laplace compress-beside <input_path> --mode balanced
+laplace compress-beside <input_path> --mode extreme --verify
 laplace estimate <input_path...>
 laplace extract <archive> <destination> --overwrite --no-verify
 laplace list <archive>
@@ -181,6 +183,15 @@ LPC-specific creation options:
 - `--hide-names` encrypts file and block tables and implies an encrypted archive.
 - `--recovery-percent <1-100>` appends Reed-Solomon recovery data.
 - `--threads <N>` controls parallel solid-block compression.
+- `--mode extreme` chooses block and dictionary sizes automatically from available memory, requires at least 256 MiB, and cannot be combined with `--block-size`.
+- Extreme archives remain normal LPC archives; per-block LZMA properties carry the larger dictionary settings without a format-version change.
+
+Multi-volume creation:
+
+- `--volume-size <size>` creates true multi-volume `.7z` or `.rar` output, such as `backup.7z.001` or `backup.part1.rar`.
+- Multi-volume `.7z` requires installed 7-Zip command-line tools.
+- Multi-volume `.rar` requires installed WinRAR/RAR command-line tools.
+- Native LPC and ZIP multi-volume output are not implemented.
 
 ## Desktop UI
 
@@ -195,6 +206,7 @@ The desktop app supports:
 - test archive integrity
 - password prompts
 - metadata-encryption and recovery-record creation options
+- multi-volume 7z/RAR creation presets
 - extract ISO contents to a removable drive
 
 Opening an `.lpc` file from Explorer also opens the desktop UI when shell integration is enabled.
@@ -218,6 +230,7 @@ It registers:
 - archive actions for open, extract with options, extract here, extract to named folder, test integrity, find, repair, and show details
 - `.iso` actions that include extracting ISO contents to a selected removable drive without formatting or raw-writing the drive
 - create actions for files, folders, and folder background
+- an `Ultra Ratio` create action for verified extreme-mode LPC output
 
 See [docs/SHELL_INTEGRATION.md](docs/SHELL_INTEGRATION.md).
 

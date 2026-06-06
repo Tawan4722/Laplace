@@ -196,6 +196,7 @@ internal static class Program
 
         var optionArgs = args.Skip(optionStart).ToArray();
         var options = ParseCreateOptions(optionArgs);
+        ValidateExtremeCreateRequest(outputPath, options);
         var quiet = IsQuiet(optionArgs);
         var json = IsJson(optionArgs);
         var dryRun = IsDryRun(optionArgs);
@@ -236,7 +237,8 @@ internal static class Program
         await archives.CompressAsync(inputPaths, outputPath, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
-        var compressedSize = new FileInfo(outputPath).Length;
+        var outputPaths = ResolveCreatedArchivePaths(outputPath, options);
+        var compressedSize = outputPaths.Sum(path => new FileInfo(path).Length);
         if (json)
         {
             WriteJson(new
@@ -245,6 +247,7 @@ internal static class Program
                 dryRun = false,
                 inputPaths,
                 outputPath,
+                outputPaths,
                 originalSize,
                 compressedSize,
                 ratio = originalSize == 0 ? 1 : (double)compressedSize / originalSize,
@@ -256,12 +259,13 @@ internal static class Program
         {
             Console.WriteLine();
             Console.WriteLine("Compression completed.");
+            PrintCreatedVolumes(outputPaths);
             PrintSizeStats(originalSize, compressedSize, stopwatch.Elapsed);
         }
 
         if (options.VerifyAfterCompression)
         {
-            var testResult = await archives.TestAsync(outputPath, options.Password).ConfigureAwait(false);
+            var testResult = await archives.TestAsync(outputPaths[0], options.Password).ConfigureAwait(false);
             if (!json)
             {
                 Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
@@ -289,6 +293,7 @@ internal static class Program
         var optionArgs = args.Skip(1).ToArray();
         var outputPath = ArchivePathHelper.ResolveBesideArchivePath(inputPath);
         var options = ParseCreateOptions(optionArgs);
+        ValidateExtremeCreateRequest(outputPath, options);
         var quiet = IsQuiet(optionArgs);
         var json = IsJson(optionArgs);
         var dryRun = IsDryRun(optionArgs);
@@ -330,7 +335,8 @@ internal static class Program
         await archives.CompressAsync([inputPath], outputPath, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
         stopwatch.Stop();
 
-        var compressedSize = new FileInfo(outputPath).Length;
+        var outputPaths = ResolveCreatedArchivePaths(outputPath, options);
+        var compressedSize = outputPaths.Sum(path => new FileInfo(path).Length);
         if (json)
         {
             WriteJson(new
@@ -339,6 +345,7 @@ internal static class Program
                 dryRun = false,
                 inputPaths = new[] { inputPath },
                 outputPath,
+                outputPaths,
                 originalSize,
                 compressedSize,
                 ratio = originalSize == 0 ? 1 : (double)compressedSize / originalSize,
@@ -350,12 +357,13 @@ internal static class Program
         {
             Console.WriteLine();
             Console.WriteLine("Compression completed.");
+            PrintCreatedVolumes(outputPaths);
             PrintSizeStats(originalSize, compressedSize, stopwatch.Elapsed);
         }
 
         if (options.VerifyAfterCompression)
         {
-            var testResult = await archives.TestAsync(outputPath, options.Password).ConfigureAwait(false);
+            var testResult = await archives.TestAsync(outputPaths[0], options.Password).ConfigureAwait(false);
             if (!json)
             {
                 Console.WriteLine(testResult.Success ? "Verification: OK" : $"Verification: FAILED ({testResult.Message})");
@@ -382,7 +390,7 @@ internal static class Program
 
         if (positional.Count < 1)
         {
-            Console.Error.WriteLine("Usage: laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
+            Console.Error.WriteLine("Usage: laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N]");
             return 1;
         }
 
@@ -1236,6 +1244,7 @@ internal static class Program
         var dryRun = IsDryRun(args);
         var quiet = IsQuiet(args);
         var options = ParseCreateOptions(args);
+        ValidateExtremeCreateRequest(outputArchive, options);
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(
             passwordOptions,
@@ -1333,6 +1342,14 @@ internal static class Program
         var dryRun = IsDryRun(args);
         var quiet = IsQuiet(args);
         var options = ParseCreateOptions(args);
+        if (options.Mode == CompressionMode.Extreme && !IsLpcArchive(archivePath))
+        {
+            throw new NotSupportedException("Extreme mode is supported for LPC archives only.");
+        }
+        if (options.Mode == CompressionMode.Extreme && options.BlockSizeExplicitlySet)
+        {
+            throw new InvalidOperationException("Extreme mode chooses block size automatically; remove --block-size.");
+        }
         var maxBytes = sizeText is null ? (long?)null : ParseSize(sizeText);
         var maxCount = countText is null ? (int?)null : int.Parse(countText);
         if (maxBytes is <= 0)
@@ -1597,6 +1614,7 @@ internal static class Program
             else if (current == "--block-size" && i + 1 < args.Length)
             {
                 options.BlockSizeBytes = ParseBlockSize(args[++i]);
+                options.BlockSizeExplicitlySet = true;
             }
             else if (current == "--threads" && i + 1 < args.Length)
             {
@@ -1978,6 +1996,18 @@ internal static class Program
         ParsedPasswordOptions passwordOptions)
     {
         var createOptions = ParseCreateOptions(args);
+        if (createOptions.Mode == CompressionMode.Extreme)
+        {
+            if (!IsLpcArchive(archivePath))
+            {
+                throw new NotSupportedException("Extreme mode is supported for LPC archives only.");
+            }
+
+            if (createOptions.BlockSizeExplicitlySet)
+            {
+                throw new InvalidOperationException("Extreme mode chooses block size automatically; remove --block-size.");
+            }
+        }
         var password = await ResolvePasswordAsync(
             passwordOptions,
             new PasswordRequest(archivePath, "Mutate archive", IsWrite: true),
@@ -2266,6 +2296,7 @@ internal static class Program
             "maximum" => CompressionMode.Maximum,
             "intensive" => CompressionMode.Intensive,
             "compressed" or "ultra" => CompressionMode.Compressed,
+            "extreme" => CompressionMode.Extreme,
             "auto" => CompressionMode.Auto,
             _ => throw new ArgumentOutOfRangeException(nameof(mode), $"Unknown mode: {mode}")
         };
@@ -2322,14 +2353,14 @@ internal static class Program
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Global options on supported commands: --json for machine-readable output, --dry-run for non-mutating previews, --from-file for newline-delimited operand lists.");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--json]");
+        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--volume-size 700M] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--json]");
         Console.WriteLine("  laplace extract <input_archive> <output_folder> [--name <glob>] [--overwrite] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace list <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace info <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace test <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace add <archive> <input_path...> [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace add <archive> <input_path...> [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace freshen <archive> <input_path...> [--from-file <path>] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace delete <archive> <entry_path_or_id_or_glob...> [--from-file <path>] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace rename <archive.lpc> <entry_path_or_id> <new_entry_path> [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
@@ -2337,8 +2368,8 @@ internal static class Program
         Console.WriteLine("  laplace lock <archive> [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace find <archive> [--name <glob>] [--text <value>] [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace diff <archive_a> <archive_b> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace merge <output_archive> <input_archive...> [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace split <archive> <output_prefix> (--size 700M|--count 100) [--mode fast|balanced|maximum|intensive|compressed|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace merge <output_archive> <input_archive...> [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace split <archive> <output_prefix> (--size 700M|--count 100) [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace view <archive.lpc> <entry_path_or_id> [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace repair <archive.lpc|archive.rar>");
         Console.WriteLine("  laplace benchmark <input_path> [--json]");
@@ -2476,6 +2507,65 @@ internal static class Program
                extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".7z", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".rar", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void ValidateExtremeCreateRequest(string outputPath, CreateArchiveOptions options)
+    {
+        if (options.Mode != CompressionMode.Extreme)
+        {
+            return;
+        }
+
+        if (ArchiveFormatDetector.DetectWriteKind(outputPath) != SupportedArchiveKind.Lpc)
+        {
+            throw new NotSupportedException("Extreme mode is supported for LPC archives only.");
+        }
+
+        if (options.BlockSizeExplicitlySet)
+        {
+            throw new InvalidOperationException("Extreme mode chooses block size automatically; remove --block-size.");
+        }
+    }
+
+    private static string[] ResolveCreatedArchivePaths(string outputPath, CreateArchiveOptions options)
+    {
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        if (options.VolumeSizeBytes is null)
+        {
+            if (!File.Exists(fullOutputPath))
+            {
+                throw new FileNotFoundException("Archive creation completed without producing the expected output file.", fullOutputPath);
+            }
+
+            return [fullOutputPath];
+        }
+
+        var volumePaths = ArchiveVolumePathHelper.FindVolumes(fullOutputPath).ToArray();
+
+        if (volumePaths.Length == 0)
+        {
+            throw new FileNotFoundException("Multi-volume archive creation completed without producing any volume files.", fullOutputPath);
+        }
+
+        return volumePaths;
+    }
+
+    private static void PrintCreatedVolumes(IReadOnlyList<string> outputPaths)
+    {
+        if (outputPaths.Count <= 1)
+        {
+            return;
+        }
+
+        Console.WriteLine($"Volumes created: {outputPaths.Count}");
+        foreach (var path in outputPaths.Take(10))
+        {
+            Console.WriteLine($"  {path}");
+        }
+        if (outputPaths.Count > 10)
+        {
+            Console.WriteLine($"  ... {outputPaths.Count - 10} more");
+        }
     }
 
     private static bool IsLpcArchive(string archivePath)

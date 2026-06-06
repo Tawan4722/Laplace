@@ -39,7 +39,9 @@ laplace integrate install --cli-path "C:\Program Files\Laplace\laplace.exe"
   - Create archive...
   - Create .lpc beside item
   - Create verified .lpc
+  - Ultra Ratio
 - Quick create commands use the selected item name and add the `.lpc` file extension. For example, `report.pdf` becomes `report.lpc`, while the archived entry remains `report.pdf`.
+- `Ultra Ratio` creates a verified LPC archive with `--mode extreme`, automatic large blocks, and a memory-bounded LZMA dictionary.
 
 ## Notes
 

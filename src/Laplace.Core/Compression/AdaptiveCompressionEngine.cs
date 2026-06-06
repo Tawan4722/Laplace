@@ -39,7 +39,7 @@ public sealed class AdaptiveCompressionEngine
 
     public IReadOnlyList<CompressionMethod> GetCandidates(CompressionMode mode, CompressionAnalysis analysis)
     {
-        if (analysis.LikelyAlreadyCompressed && mode is not (CompressionMode.Intensive or CompressionMode.Compressed))
+        if (analysis.LikelyAlreadyCompressed && mode is not (CompressionMode.Intensive or CompressionMode.Compressed or CompressionMode.Extreme))
         {
             return [CompressionMethod.Raw, CompressionMethod.Lz4Fast, CompressionMethod.ZstdFast];
         }
@@ -51,6 +51,7 @@ public sealed class AdaptiveCompressionEngine
             CompressionMode.Maximum => [CompressionMethod.Bsc, CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Raw],
             CompressionMode.Intensive => [CompressionMethod.Zpaq, CompressionMethod.Bsc, CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.DeflateFallback, CompressionMethod.ZstdFast, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
             CompressionMode.Compressed => [CompressionMethod.Zpaq, CompressionMethod.Bsc, CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.ZstdBalanced, CompressionMethod.DeflateFallback, CompressionMethod.Blosc2, CompressionMethod.ZstdFast, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
+            CompressionMode.Extreme => [CompressionMethod.LzmaMax, CompressionMethod.ZstdHigh, CompressionMethod.Blosc2, CompressionMethod.DeflateFallback, CompressionMethod.Raw],
             CompressionMode.Auto => GetAutoCandidates(analysis),
             _ => [CompressionMethod.ZstdBalanced, CompressionMethod.Raw]
         };
@@ -71,6 +72,7 @@ public sealed class AdaptiveCompressionEngine
             CompressionMode.Maximum => (0.70, 0.15, 0.10, 0.05),
             CompressionMode.Intensive => (0.85, 0.05, 0.05, 0.05),
             CompressionMode.Compressed => (0.95, 0.00, 0.02, 0.03),
+            CompressionMode.Extreme => (1.00, 0.00, 0.00, 0.00),
             _ => (0.50, 0.30, 0.10, 0.10)
         };
 

@@ -2,6 +2,7 @@
 
 local -a commands
 local -a options
+local -a modes
 
 commands=(
   compress compress-beside estimate extract list info test add freshen delete rename
@@ -17,9 +18,12 @@ options=(
   --cli-path
 )
 
+modes=(fast balanced maximum intensive compressed extreme auto)
+
 _arguments '*:value:->value'
 
 if [[ $state == value ]]; then
   _describe 'laplace' commands
   _describe 'laplace option' options
+  _describe 'laplace mode' modes
 fi

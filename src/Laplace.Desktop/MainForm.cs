@@ -891,6 +891,7 @@ internal sealed class CreateArchiveDialog : Form
     private readonly ComboBox _mode = new();
     private readonly ComboBox _blockSize = new();
     private readonly ComboBox _solid = new();
+    private readonly ComboBox _volumeSize = new();
     private readonly NumericUpDown _threads = new();
     private readonly CheckBox _verify = new();
     private readonly CheckBox _encrypt = new();
@@ -898,13 +899,14 @@ internal sealed class CreateArchiveDialog : Form
     private readonly NumericUpDown _recovery = new();
     private readonly TextBox _password = new();
     private readonly TextBox _confirmPassword = new();
+    private bool _blockSizeChanged;
     private bool _autoOutputPath = true;
     private bool _updatingOutputPath;
 
     public CreateArchiveDialog(IEnumerable<string> initialInputs)
     {
         Text = "Add to archive";
-        ClientSize = new Size(720, 584);
+        ClientSize = new Size(720, 612);
         MinimumSize = new Size(640, 460);
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 9F);
@@ -917,7 +919,7 @@ internal sealed class CreateArchiveDialog : Form
             ColumnCount = 1
         };
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 294));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 322));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
         _inputs.Dock = DockStyle.Fill;
@@ -946,14 +948,15 @@ internal sealed class CreateArchiveDialog : Form
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        for (var i = 0; i < 10; i++)
+        for (var i = 0; i < 11; i++)
         {
             options.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         }
 
-        ConfigureCombo(_mode, ["Balanced", "Fast", "Maximum", "Intensive", "Compressed", "Auto"], 0);
+        ConfigureCombo(_mode, ["Balanced", "Fast", "Maximum", "Intensive", "Compressed", "Extreme", "Auto"], 0);
         ConfigureCombo(_blockSize, ["8M", "4M", "16M", "32M", "64M"], 0);
         ConfigureCombo(_solid, ["Auto", "On", "Off"], 0);
+        ConfigureCombo(_volumeSize, ["None", "10M", "100M", "700M", "1G", "4G"], 0);
         _threads.Minimum = 1;
         _threads.Maximum = Math.Max(1, Environment.ProcessorCount * 2);
         _threads.Value = Math.Max(1, Environment.ProcessorCount);
@@ -995,9 +998,11 @@ internal sealed class CreateArchiveDialog : Form
         options.Controls.Add(_confirmPassword, 1, 6);
         options.Controls.Add(FormLabel("Recovery %"), 0, 7);
         options.Controls.Add(_recovery, 1, 7);
-        options.Controls.Add(_verify, 1, 8);
-        options.Controls.Add(_encrypt, 2, 8);
-        options.Controls.Add(_hideNames, 2, 9);
+        options.Controls.Add(FormLabel("Volume size"), 0, 8);
+        options.Controls.Add(_volumeSize, 1, 8);
+        options.Controls.Add(_verify, 1, 9);
+        options.Controls.Add(_encrypt, 2, 9);
+        options.Controls.Add(_hideNames, 2, 10);
         _output.Dock = DockStyle.Fill;
         _password.Dock = DockStyle.Left;
         _password.Width = 220;
@@ -1009,6 +1014,11 @@ internal sealed class CreateArchiveDialog : Form
             {
                 _autoOutputPath = false;
             }
+        };
+        _blockSize.SelectedIndexChanged += (_, _) => _blockSizeChanged = true;
+        _mode.SelectedIndexChanged += (_, _) =>
+        {
+            _blockSize.Enabled = !_mode.Text.Equals("Extreme", StringComparison.OrdinalIgnoreCase);
         };
         UpdateDefaultOutputPath();
 
@@ -1034,12 +1044,14 @@ internal sealed class CreateArchiveDialog : Form
     {
         Mode = ParseMode(_mode.Text),
         BlockSizeBytes = ParseBlockSize(_blockSize.Text),
+        BlockSizeExplicitlySet = _blockSizeChanged && !_mode.Text.Equals("Extreme", StringComparison.OrdinalIgnoreCase),
         SolidMode = ParseSolidMode(_solid.Text),
         Threads = (int)_threads.Value,
         VerifyAfterCompression = _verify.Checked,
         Password = _encrypt.Checked ? PasswordContext.FromNullable(_password.Text) : null,
         EncryptMetadata = _hideNames.Checked,
-        RecoveryPercent = (int)_recovery.Value
+        RecoveryPercent = (int)_recovery.Value,
+        VolumeSizeBytes = ParseVolumeSize(_volumeSize.Text)
     };
 
     private void AddFiles(object? sender, EventArgs e)
@@ -1133,6 +1145,16 @@ internal sealed class CreateArchiveDialog : Form
             return;
         }
 
+        var outputExtension = Path.GetExtension(_output.Text);
+        if (!_volumeSize.Text.Equals("None", StringComparison.OrdinalIgnoreCase) &&
+            !outputExtension.Equals(".7z", StringComparison.OrdinalIgnoreCase) &&
+            !outputExtension.Equals(".rar", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowDialogMessage("Multi-volume output requires a 7z or RAR archive.");
+            DialogResult = DialogResult.None;
+            return;
+        }
+
         if (_encrypt.Checked)
         {
             try
@@ -1200,6 +1222,7 @@ internal sealed class CreateArchiveDialog : Form
             "maximum" => CompressionMode.Maximum,
             "intensive" => CompressionMode.Intensive,
             "compressed" => CompressionMode.Compressed,
+            "extreme" => CompressionMode.Extreme,
             "auto" => CompressionMode.Auto,
             _ => CompressionMode.Balanced
         };
@@ -1218,6 +1241,23 @@ internal sealed class CreateArchiveDialog : Form
     private static int ParseBlockSize(string value)
     {
         return int.Parse(value.TrimEnd('M', 'm')) * 1024 * 1024;
+    }
+
+    private static long? ParseVolumeSize(string value)
+    {
+        if (value.Equals("None", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var suffix = char.ToUpperInvariant(value[^1]);
+        var amount = long.Parse(value[..^1]);
+        return suffix switch
+        {
+            'M' => amount * 1024 * 1024,
+            'G' => amount * 1024 * 1024 * 1024,
+            _ => throw new ArgumentException($"Unsupported volume size: {value}")
+        };
     }
 
     private void ShowDialogMessage(string message)
