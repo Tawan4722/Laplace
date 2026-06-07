@@ -21,6 +21,7 @@ public sealed class MainForm : Form
     private readonly ToolStripButton _extractButton = new();
     private readonly ToolStripButton _testButton = new();
     private readonly ToolStripButton _infoButton = new();
+    private readonly OperationOverlay _operationOverlay = new();
 
     private string? _currentArchivePath;
     private PasswordContext? _currentPassword;
@@ -51,10 +52,12 @@ public sealed class MainForm : Form
         Controls.Add(toolbar);
         Controls.Add(menu);
         Controls.Add(status);
+        Controls.Add(_operationOverlay);
         MainMenuStrip = menu;
 
         DragEnter += MainForm_DragEnter;
         DragDrop += MainForm_DragDrop;
+        _operationOverlay.CancelRequested += (_, _) => CancelCurrentOperation();
 
         UpdateArchiveState(null, null);
         Shown += (_, _) => ApplyStartupArgs(args);
@@ -183,6 +186,7 @@ public sealed class MainForm : Form
         _progressBar.Width = 180;
         _progressBar.Minimum = 0;
         _progressBar.Maximum = 100;
+        _progressBar.Visible = false;
         _cancelOperationButton.Text = "Cancel";
         _cancelOperationButton.Enabled = false;
         _cancelOperationButton.Visible = false;
@@ -268,10 +272,35 @@ public sealed class MainForm : Form
         }
         catch (ArchivePasswordRequiredException) when (password is null)
         {
-            var prompted = PromptForPassword("Archive password");
+            SetBusy(false);
+            var prompted = PromptForPassword(
+                "Unlock archive",
+                archivePath,
+                "This archive is encrypted. Enter its password to view the contents.");
             if (prompted is not null)
             {
                 await LoadArchiveAsync(archivePath, prompted).ConfigureAwait(true);
+            }
+            else
+            {
+                SetStatus("Archive opening cancelled.", 0);
+            }
+        }
+        catch (ArchivePasswordException) when (password is not null)
+        {
+            SetBusy(false);
+            var prompted = PromptForPassword(
+                "Try password again",
+                archivePath,
+                "That password could not unlock the archive. Check it and try again.",
+                isError: true);
+            if (prompted is not null)
+            {
+                await LoadArchiveAsync(archivePath, prompted).ConfigureAwait(true);
+            }
+            else
+            {
+                SetStatus("Archive opening cancelled.", 0);
             }
         }
         catch (Exception ex)
@@ -631,7 +660,7 @@ public sealed class MainForm : Form
         UseWaitCursor = busy;
         foreach (Control control in Controls)
         {
-            if (control is StatusStrip)
+            if (control is StatusStrip || ReferenceEquals(control, _operationOverlay))
             {
                 continue;
             }
@@ -652,7 +681,14 @@ public sealed class MainForm : Form
             UpdateArchiveState(_currentArchivePath, _currentSummary);
         }
 
-        _progressBar.Visible = true;
+        _operationOverlay.Visible = busy;
+        if (busy)
+        {
+            _operationOverlay.ShowOperation(canCancel);
+            _operationOverlay.BringToFront();
+        }
+
+        _progressBar.Visible = busy;
         _cancelOperationButton.Visible = busy && canCancel;
         _cancelOperationButton.Enabled = busy && canCancel;
     }
@@ -661,6 +697,7 @@ public sealed class MainForm : Form
     {
         _statusLabel.Text = message;
         _progressBar.Value = Math.Clamp(percent, 0, 100);
+        _operationOverlay.SetProgress(message, percent);
     }
 
     private void CancelCurrentOperation()
@@ -672,6 +709,7 @@ public sealed class MainForm : Form
 
         _cancelOperationButton.Enabled = false;
         SetStatus("Cancelling...", _progressBar.Value);
+        _operationOverlay.SetCancelling();
         _operationCancellation.Cancel();
     }
 
@@ -701,9 +739,13 @@ public sealed class MainForm : Form
             .ToHashSet();
     }
 
-    private PasswordContext? PromptForPassword(string title)
+    private PasswordContext? PromptForPassword(
+        string title,
+        string archivePath,
+        string description,
+        bool isError = false)
     {
-        using var dialog = new PasswordDialog(title);
+        using var dialog = new PasswordDialog(title, archivePath, description, isError);
         return dialog.ShowDialog(this) == DialogResult.OK ? dialog.Password : null;
     }
 
@@ -1361,47 +1403,6 @@ internal sealed class ExtractArchiveDialog : Form
     {
         return new Label { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
     }
-}
-
-internal sealed class PasswordDialog : Form
-{
-    private readonly TextBox _password = new();
-
-    public PasswordDialog(string title)
-    {
-        Text = title;
-        ClientSize = new Size(360, 118);
-        StartPosition = FormStartPosition.CenterParent;
-        Font = new Font("Segoe UI", 9F);
-
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(10),
-            ColumnCount = 2,
-            RowCount = 2
-        };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
-
-        _password.UseSystemPasswordChar = true;
-        _password.Dock = DockStyle.Fill;
-        root.Controls.Add(new Label { Text = "Password", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
-        root.Controls.Add(_password, 1, 0);
-
-        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
-        footer.Controls.Add(new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 82 });
-        footer.Controls.Add(new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 82 });
-        root.Controls.Add(footer, 0, 1);
-        root.SetColumnSpan(footer, 2);
-        AcceptButton = footer.Controls.OfType<Button>().First();
-        CancelButton = footer.Controls.OfType<Button>().Last();
-        Controls.Add(root);
-    }
-
-    public PasswordContext? Password => PasswordContext.FromNullable(_password.Text);
 }
 
 internal sealed class IsoToDriveDialog : Form
