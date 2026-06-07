@@ -1,15 +1,30 @@
 using Laplace.Core.Abstractions;
 using Laplace.Core.Enums;
 using ZstdSharp;
+using ZstdSharp.Unsafe;
 
 namespace Laplace.Compression.Compressors;
 
 public sealed class ZstdCompressor : IBlockCompressor
 {
-    public ZstdCompressor(CompressionMethod method, int level)
+    private readonly int? _windowLog;
+    private readonly bool _enableLongDistanceMatching;
+
+    public ZstdCompressor(
+        CompressionMethod method,
+        int level,
+        int? windowLog = null,
+        bool enableLongDistanceMatching = false)
     {
+        if (windowLog is < 10 or > 31)
+        {
+            throw new ArgumentOutOfRangeException(nameof(windowLog), "Zstd window log must be between 10 and 31.");
+        }
+
         Method = method;
         Level = level;
+        _windowLog = windowLog;
+        _enableLongDistanceMatching = enableLongDistanceMatching;
     }
 
     public CompressionMethod Method { get; }
@@ -20,8 +35,16 @@ public sealed class ZstdCompressor : IBlockCompressor
         using var output = new MemoryStream();
         using (var zstd = new CompressionStream(output, Level))
         {
-            var bytes = data.ToArray();
-            zstd.Write(bytes, 0, bytes.Length);
+            if (_windowLog is { } windowLog)
+            {
+                zstd.SetParameter(ZSTD_cParameter.ZSTD_c_windowLog, windowLog);
+            }
+            if (_enableLongDistanceMatching)
+            {
+                zstd.SetParameter(ZSTD_cParameter.ZSTD_c_enableLongDistanceMatching, 1);
+            }
+
+            zstd.Write(data);
         }
 
         return output.ToArray();

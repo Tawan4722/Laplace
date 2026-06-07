@@ -51,6 +51,7 @@ Invoke-NativeCommand "dotnet publish Laplace.Cli" {
         -c $Configuration `
         -r $Runtime `
         --self-contained $selfContainedValue `
+        -p:Version=$Version `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -o $publishDir
@@ -61,6 +62,7 @@ Invoke-NativeCommand "dotnet publish Laplace.Desktop" {
         -c $Configuration `
         -r $Runtime `
         --self-contained $selfContainedValue `
+        -p:Version=$Version `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -o $publishDir

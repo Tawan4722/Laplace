@@ -1,6 +1,6 @@
 # MSIX Packaging
 
-Laplace includes a manual MSIX build pipeline for the current CLI executable.
+Laplace includes a manual MSIX build pipeline for the CLI and desktop application.
 
 Files:
 
@@ -28,6 +28,8 @@ Output:
 
 - `artifacts\msix\Laplace_<version>_<runtime>.msix`
 - `artifacts\msix\cert\LaplaceProjectDev.pfx` (if auto-generated)
+
+The package display images are generated from the transparent `assets/laplace-logo.png` source. The build creates the required 44, 50, and 150 pixel branded assets during staging.
 
 ## Install Package
 

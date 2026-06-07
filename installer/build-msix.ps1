@@ -64,10 +64,38 @@ function Invoke-NativeCommand([string]$Label, [scriptblock]$Command) {
     }
 }
 
-function Write-PlaceholderPng([string]$path) {
-    # 1x1 transparent PNG
-    $base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9r7VQAAAAASUVORK5CYII="
-    [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($base64))
+function Write-LogoPng([string]$sourcePath, [string]$targetPath, [int]$size) {
+    Add-Type -AssemblyName System.Drawing
+    $source = [System.Drawing.Image]::FromFile($sourcePath)
+    try {
+        $target = [System.Drawing.Bitmap]::new(
+            $size,
+            $size,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        try {
+            $graphics = [System.Drawing.Graphics]::FromImage($target)
+            try {
+                $graphics.Clear([System.Drawing.Color]::Transparent)
+                $graphics.CompositingMode = [System.Drawing.Drawing2D.CompositingMode]::SourceCopy
+                $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+                $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+                $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                $graphics.DrawImage($source, 0, 0, $size, $size)
+            }
+            finally {
+                $graphics.Dispose()
+            }
+
+            $target.Save($targetPath, [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+        finally {
+            $target.Dispose()
+        }
+    }
+    finally {
+        $source.Dispose()
+    }
 }
 
 function Ensure-CodeSigningCert([string]$certPublisher, [string]$targetPfx, [string]$password, [switch]$installCert) {
@@ -107,6 +135,7 @@ $manifestTemplatePath = Join-Path $PSScriptRoot "msix\AppxManifest.template.xml"
 $manifestOutPath = Join-Path $stageDir "AppxManifest.xml"
 $packagePath = Join-Path $msixRoot "Laplace_$Version`_$Runtime.msix"
 $certDir = Join-Path $msixRoot "cert"
+$logoPath = Join-Path $repoRoot "assets\laplace-logo.png"
 $dotnet = Resolve-Dotnet
 
 Ensure-Dir $msixRoot
@@ -130,6 +159,7 @@ Invoke-NativeCommand "dotnet publish Laplace.Cli" {
         -c $Configuration `
         -r $Runtime `
         --self-contained $selfContainedValue `
+        -p:Version=$Version `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -o $publishDir
@@ -140,6 +170,7 @@ Invoke-NativeCommand "dotnet publish Laplace.Desktop" {
         -c $Configuration `
         -r $Runtime `
         --self-contained $selfContainedValue `
+        -p:Version=$Version `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
         -o $publishDir
@@ -153,9 +184,9 @@ Ensure-Dir $assetsDir
 Copy-Item -Path (Join-Path $publishDir "*") -Destination $stageDir -Recurse -Force
 Copy-Item -Path (Join-Path $repoRoot "README.md") -Destination $stageDir -Force
 
-Write-PlaceholderPng (Join-Path $assetsDir "StoreLogo.png")
-Write-PlaceholderPng (Join-Path $assetsDir "Square44x44Logo.png")
-Write-PlaceholderPng (Join-Path $assetsDir "Square150x150Logo.png")
+Write-LogoPng $logoPath (Join-Path $assetsDir "StoreLogo.png") 50
+Write-LogoPng $logoPath (Join-Path $assetsDir "Square44x44Logo.png") 44
+Write-LogoPng $logoPath (Join-Path $assetsDir "Square150x150Logo.png") 150
 
 Write-Host "==> Generating AppxManifest.xml..."
 $manifest = Get-Content -Path $manifestTemplatePath -Raw

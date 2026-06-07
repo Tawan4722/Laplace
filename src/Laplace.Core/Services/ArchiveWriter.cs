@@ -326,6 +326,11 @@ public sealed class ArchiveWriter
                 fileEntry.OriginalSize += bytesRead;
                 fileEntry.BlockCount++;
                 processedBytes += bytesRead;
+                if (options.Mode == CompressionMode.Extreme)
+                {
+                    outputBytes = [];
+                    GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                }
 
                 progress?.Report(new ArchiveOperationProgress
                 {
@@ -416,21 +421,38 @@ public sealed class ArchiveWriter
                     if (solidBufferLength == solidBuffer.Length)
                     {
                         var blockId = blockEntries.Count + pendingBlocks.Count;
-                        var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
                         var hintPath = blockHintPath;
                         var streamOffset = blockStreamOffset;
-                        pendingBlocks.Enqueue(Task.Run(
-                            () => PrepareSolidBlock(blockId, hintPath, options, blockData, streamOffset),
-                            cancellationToken));
-                        if (pendingBlocks.Count >= maxPendingBlocks)
+                        if (maxPendingBlocks == 1)
                         {
                             await WritePreparedSolidBlockAsync(
-                                await pendingBlocks.Dequeue().ConfigureAwait(false),
+                                PrepareSolidBlock(blockId, hintPath, options, solidBuffer, solidBufferLength, streamOffset),
                                 header,
                                 encryptionKey,
                                 archiveStream,
                                 blockEntries,
                                 cancellationToken).ConfigureAwait(false);
+                            if (options.Mode == CompressionMode.Extreme)
+                            {
+                                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                            }
+                        }
+                        else
+                        {
+                            var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
+                            pendingBlocks.Enqueue(Task.Run(
+                                () => PrepareSolidBlock(blockId, hintPath, options, blockData, blockData.Length, streamOffset),
+                                cancellationToken));
+                            if (pendingBlocks.Count >= maxPendingBlocks)
+                            {
+                                await WritePreparedSolidBlockAsync(
+                                    await pendingBlocks.Dequeue().ConfigureAwait(false),
+                                    header,
+                                    encryptionKey,
+                                    archiveStream,
+                                    blockEntries,
+                                    cancellationToken).ConfigureAwait(false);
+                            }
                         }
                         blockStreamOffset += solidBufferLength;
                         solidBufferLength = 0;
@@ -453,12 +475,25 @@ public sealed class ArchiveWriter
         if (solidBufferLength > 0)
         {
             var blockId = blockEntries.Count + pendingBlocks.Count;
-            var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
             var hintPath = blockHintPath;
             var streamOffset = blockStreamOffset;
-            pendingBlocks.Enqueue(Task.Run(
-                () => PrepareSolidBlock(blockId, hintPath, options, blockData, streamOffset),
-                cancellationToken));
+            if (maxPendingBlocks == 1)
+            {
+                await WritePreparedSolidBlockAsync(
+                    PrepareSolidBlock(blockId, hintPath, options, solidBuffer, solidBufferLength, streamOffset),
+                    header,
+                    encryptionKey,
+                    archiveStream,
+                    blockEntries,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
+                pendingBlocks.Enqueue(Task.Run(
+                    () => PrepareSolidBlock(blockId, hintPath, options, blockData, blockData.Length, streamOffset),
+                    cancellationToken));
+            }
         }
 
         while (pendingBlocks.Count > 0)
@@ -480,16 +515,17 @@ public sealed class ArchiveWriter
         string blockHintPath,
         CreateArchiveOptions options,
         byte[] blockData,
+        int blockLength,
         long originalStreamOffset)
     {
-        var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(blockHintPath, options, blockData, blockData.Length);
+        var (outputMethod, outputBytes, isRaw) = SelectAndCompressBlock(blockHintPath, options, blockData, blockLength);
         var compressor = GetCompressorForCompression(outputMethod, options);
         return new PreparedSolidBlock(
             new BlockEntryRecord
             {
                 BlockId = blockId,
                 OwningFileEntryId = -1,
-                OriginalBlockSize = blockData.Length,
+                OriginalBlockSize = blockLength,
                 CompressedBlockSize = outputBytes.Length,
                 CompressionMethod = outputMethod,
                 CompressionLevel = compressor.Level,
@@ -642,11 +678,24 @@ public sealed class ArchiveWriter
             : blockData[..Math.Min(blockData.Length, 64 * 1024)].ToArray();
         var sample = sampleBytes.AsSpan();
         var analysis = _adaptiveCompressionEngine.Analyze(relativePath, sample);
-        var bestMethod = SelectPreferredMethod(options.Mode, analysis, sample);
+        var bestMethod = SelectPreferredMethod(options, analysis, sample);
+        if (bestMethod == CompressionMethod.LzmaMax &&
+            options.Mode == CompressionMode.Extreme &&
+            (blockLength > 32 * 1024 * 1024 ||
+             options.LzmaDictionarySizeBytes is > 8 * 1024 * 1024))
+        {
+            bestMethod = CompressionMethod.ZstdHigh;
+        }
+        if (bestMethod == CompressionMethod.Raw &&
+            options.Mode == CompressionMode.Extreme &&
+            options.ZstdForceLongDistanceTrial)
+        {
+            bestMethod = CompressionMethod.ZstdHigh;
+        }
 
         if (bestMethod == CompressionMethod.Raw)
         {
-            return (CompressionMethod.Raw, blockData.ToArray(), true);
+            return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true);
         }
 
         byte[] compressed;
@@ -656,15 +705,22 @@ public sealed class ArchiveWriter
         }
         catch
         {
-            return (CompressionMethod.Raw, blockData.ToArray(), true);
+            return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true);
         }
 
         if (compressed.Length >= blockData.Length)
         {
-            return (CompressionMethod.Raw, blockData.ToArray(), true);
+            return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true);
         }
 
         return (bestMethod, compressed, false);
+    }
+
+    private static byte[] GetRawBlockBytes(byte[] blockBuffer, int blockLength)
+    {
+        return blockLength == blockBuffer.Length
+            ? blockBuffer
+            : blockBuffer.AsSpan(0, blockLength).ToArray();
     }
 
     private IBlockCompressor GetCompressorForCompression(CompressionMethod method, CreateArchiveOptions options)
@@ -674,6 +730,16 @@ public sealed class ArchiveWriter
             _compressorRegistry is IConfigurableCompressorRegistry configurableRegistry)
         {
             return configurableRegistry.GetLzmaCompressor(dictionarySize, options.LzmaFastBytes);
+        }
+        if (method == CompressionMethod.ZstdHigh &&
+            options.ZstdWindowLog is { } windowLog &&
+            _compressorRegistry is IConfigurableCompressorRegistry configurableZstdRegistry)
+        {
+            return configurableZstdRegistry.GetZstdCompressor(
+                method,
+                level: options.ZstdLevel,
+                windowLog: windowLog,
+                enableLongDistanceMatching: options.ZstdLongDistanceMatching);
         }
 
         return _compressorRegistry.GetCompressor(method);
@@ -695,8 +761,12 @@ public sealed class ArchiveWriter
         return sample;
     }
 
-    private CompressionMethod SelectPreferredMethod(CompressionMode mode, CompressionAnalysis analysis, ReadOnlySpan<byte> sample)
+    private CompressionMethod SelectPreferredMethod(
+        CreateArchiveOptions options,
+        CompressionAnalysis analysis,
+        ReadOnlySpan<byte> sample)
     {
+        var mode = options.Mode;
         if (mode == CompressionMode.Fast)
         {
             return SelectFastMethod(analysis);
@@ -713,7 +783,7 @@ public sealed class ArchiveWriter
 
             try
             {
-                var compressedSample = _compressorRegistry.GetCompressor(candidate).Compress(sample);
+                var compressedSample = GetCompressorForSampling(candidate, options).Compress(sample);
                 var ratio = (double)compressedSample.Length / sample.Length;
                 if (ratio >= 1.0)
                 {
@@ -745,12 +815,20 @@ public sealed class ArchiveWriter
             }
         }
 
-        if (mode == CompressionMode.Extreme && bestMethod == CompressionMethod.Raw)
+        return bestMethod;
+    }
+
+    private IBlockCompressor GetCompressorForSampling(CompressionMethod method, CreateArchiveOptions options)
+    {
+        if (method == CompressionMethod.LzmaMax &&
+            options.Mode == CompressionMode.Extreme &&
+            _compressorRegistry is IConfigurableCompressorRegistry configurableRegistry)
         {
-            return CompressionMethod.LzmaMax;
+            var sampleDictionarySize = Math.Min(options.LzmaDictionarySizeBytes ?? 4 * 1024 * 1024, 4 * 1024 * 1024);
+            return configurableRegistry.GetLzmaCompressor(sampleDictionarySize, Math.Min(options.LzmaFastBytes, 128));
         }
 
-        return bestMethod;
+        return _compressorRegistry.GetCompressor(method);
     }
 
     private static CompressionMethod SelectFastMethod(CompressionAnalysis analysis)

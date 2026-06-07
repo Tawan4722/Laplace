@@ -41,6 +41,15 @@ public sealed class CompressorRegistry : ICompressorRegistry, IConfigurableCompr
         return new LzmaCompressor(dictionarySizeBytes, fastBytes);
     }
 
+    public IBlockCompressor GetZstdCompressor(
+        CompressionMethod method,
+        int level,
+        int windowLog,
+        bool enableLongDistanceMatching)
+    {
+        return new ZstdCompressor(method, level, windowLog, enableLongDistanceMatching);
+    }
+
     private void TryRegisterExternal(CompressionMethod method, string compressEnvironmentVariable, string decompressEnvironmentVariable)
     {
         var compressor = ExternalCommandCompressor.TryCreate(method, compressEnvironmentVariable, decompressEnvironmentVariable);

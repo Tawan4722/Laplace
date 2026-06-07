@@ -2,37 +2,72 @@
 
 ![Laplace logo](assets/laplace-logo.png)
 
-Laplace is a Windows-first archive manager with a native `.lpc` format, a CLI, a WinForms desktop app, Explorer context-menu integration, packaging scripts, and a test suite.
+Laplace is a Windows-first archive manager with a native `.lpc` format, a command-line interface, a desktop application, and Explorer integration.
 
-The native `.lpc` format is implemented in this repository. Laplace is not a wrapper around 7-Zip, WinRAR, or Windows shell archive commands.
+[Download the latest release](https://github.com/Tawan4722/Laplace/releases/latest)
 
-## What It Does
+## Highlights
 
-- Creates native `.lpc` archives.
-- Creates `.zip`, `.7z`, and `.rar` archives, including true multi-volume `.7z` and `.rar` output through installed tools.
-- Extracts, lists, inspects, and tests common archive formats, including CAB packages.
-- Adds, freshens, deletes, renames, comments, locks, finds, views, and repairs supported archives.
-- Supports encrypted `.lpc` archives and password-aware ZIP workflows.
-- Provides a desktop UI for create, estimate, open/list, extract, test, and ISO-to-removable-drive workflows.
-- Provides per-user Explorer context-menu integration.
-- Builds installer and MSIX release artifacts.
+- Native block-based `.lpc` archives with adaptive compression.
+- AES-256-GCM payload and metadata encryption.
+- Argon2id password derivation for new encrypted LPC archives.
+- Solid archives, recovery records, integrity testing, and repair.
+- ZIP, 7z, RAR, CAB, ISO, tar, gzip, bzip2, xz, Zstandard, and lzip workflows.
+- Windows desktop UI with operation progress, cancellation, and a dedicated encrypted-archive unlock screen.
+- Per-user Explorer context menus and `.lpc` file association.
+- Self-contained Windows installer and MSIX packages.
 
-## Current Status
+Laplace implements LPC directly. It is not a wrapper around 7-Zip, WinRAR, or Windows shell commands. Some non-LPC formats intentionally use managed libraries or installed external tools where those formats require them.
 
-Laplace is practical today as a native archive tool and archive-management shell for Windows, but it should not be treated as a universal RAR or 7-Zip replacement.
+## Install
 
-The strongest parts of the project are transparency, native LPC control, path safety, and Windows integration. External archive formats are supported through managed libraries or installed command-line tools where that is the right tradeoff.
+Download `LaplaceSetup.exe` from the [latest GitHub Release](https://github.com/Tawan4722/Laplace/releases/latest).
+
+The installer:
+
+- installs under `%LOCALAPPDATA%\Laplace`
+- installs `laplace.exe` and `laplace-gui.exe`
+- can create desktop and Start Menu shortcuts
+- can register `.lpc` files
+- can enable the Explorer context menu
+
+The release also provides:
+
+- `Laplace_<version>_win-x64.msix`
+- `SHA256SUMS.txt`
+
+## Desktop App
+
+The desktop app supports:
+
+- creating LPC, ZIP, 7z, and RAR archives
+- compression estimates
+- opening and listing archive contents
+- extracting complete archives or selected entries
+- deleting selected LPC entries
+- archive integrity testing
+- archive information
+- encrypted archive unlocking and password retry
+- metadata encryption and LPC recovery options
+- multi-volume 7z and RAR presets
+- ISO extraction to a removable drive without formatting or raw-writing it
+
+Long-running work uses a centered progress screen with the current item, percentage when available, and cancellation. Encrypted archives use a dedicated password dialog with archive context, password visibility control, Caps Lock feedback, validation, and retry after an incorrect password.
+
+Opening an `.lpc` file from Explorer launches the desktop app when integration is enabled.
 
 ## Supported Formats
 
-Create:
+### Create
 
-- `.lpc`
-- `.zip`
-- `.7z`
-- `.rar` when `rar.exe` or `WinRAR.exe` is installed
+| Format | Support |
+| --- | --- |
+| `.lpc` | Native |
+| `.zip` | Built in, including AES-256 encryption |
+| `.7z` | Built in for standard paths; installed 7-Zip is used for advanced or multi-volume output |
+| `.rar` | Requires installed `rar.exe` or `WinRAR.exe` |
 
-Read, list, info, test, and extract:
+### Read, List, Test, and Extract
 
 - `.lpc`
 - `.zip`
@@ -50,57 +85,54 @@ Read, list, info, test, and extract:
 - `.zst`
 - `.lzip`
 
-Unsupported formats fail with a clear error. For some non-password external archives on Windows, Laplace can fall back to the inbox `tar.exe`/libarchive path when the managed reader cannot extract them. CAB archives are recognized in the UI and shell integration and are routed through the external archive path when the runtime can handle them.
+For some non-password external archives, Laplace can fall back to Windows `tar.exe` and its libarchive support when the managed reader cannot complete extraction. Unsupported or unreadable formats fail with an explicit error.
 
-## Native LPC Format
+## LPC Format
 
-`.lpc` archives use:
+LPC is Laplace's native archive format.
 
-- Magic header `LPC1`
-- LPCv1 for unencrypted archives
-- LPCv2 for encrypted payload blocks
-- LPCv3 for locked archives
-- LPCv4 for native solid archives
-- LPCv5 for versioned Argon2id/PBKDF2 key derivation
-- LPCv6 for encrypted file and block tables
-- LPCv7 for Reed-Solomon recovery records
-- Sequential data, file, and block metadata sections
-- Header CRC32C
-- Per-block CRC32C
-- Per-file SHA-256
-- Optional AES-256-GCM payload and metadata encryption
-- Optional Reed-Solomon recovery data
+| Version | Capability |
+| --- | --- |
+| LPCv1 | Unencrypted archives |
+| LPCv2 | AES-256-GCM encrypted payload blocks |
+| LPCv3 | Locked archives |
+| LPCv4 | Native solid archive layout |
+| LPCv5 | Versioned Argon2id and PBKDF2 key derivation |
+| LPCv6 | Authenticated encryption for file and block tables |
+| LPCv7 | Reed-Solomon recovery records |
 
-New encrypted LPC archives use Argon2id by default. Older PBKDF2-HMAC-SHA256 archives remain readable, and LPCv5 records the selected KDF and its bounded parameters explicitly.
+LPC archives include:
 
-Payload encryption protects compressed block bytes. With `--hide-names`, LPCv6 also encrypts and authenticates file and block tables, so listing and archive details require the password. LPCv7 recovery records add striped Reed-Solomon parity that `laplace repair` can use without decrypting the archive. Native LPC multi-volume and SFX output remain reserved.
+- header CRC32C
+- per-block CRC32C
+- per-file SHA-256
+- authenticated encrypted payloads
+- optional encrypted file names and metadata
+- optional recovery data for damaged protected shards
 
-See [docs/LPC_FORMAT.md](docs/LPC_FORMAT.md) for the binary layout.
+New encrypted archives use Argon2id by default. Older PBKDF2-HMAC-SHA256 archives remain readable.
+
+See [LPC format documentation](docs/LPC_FORMAT.md).
 
 ## Compression
 
-Laplace chooses LPC compression from:
+Laplace analyzes file hints and sampled data before selecting a compressor per block. It considers entropy, repetition, text and zero-byte ratios, reusable patterns, and trial-compressed sizes. A block is stored as `RAW` whenever compression would make it larger.
 
-- compression mode
-- file extension hints
-- entropy estimate
-- repetition estimate
-- pattern reuse
-- text ratio
-- zero-byte ratio
-- trial-compressed sample sizes
+### Modes
 
-Modes:
+| Mode | Purpose |
+| --- | --- |
+| `fast` | Prioritize throughput |
+| `balanced` | Default size and speed tradeoff |
+| `maximum` | Favor smaller output |
+| `intensive` | Test the strongest available candidates |
+| `compressed` | Ratio-first profile; can delegate advanced 7z/RAR output to installed tools |
+| `extreme` | LPC-only, single-worker, memory-tiered large-block compression |
+| `auto` | Select candidates from content analysis |
 
-- `fast`: throughput-first
-- `balanced`: default tradeoff
-- `maximum`: size-focused
-- `intensive`: strongest candidate set and ratio-focused scoring
-- `compressed`: strongest ratio-first profile; for `.7z`, uses installed 7-Zip with solid LZMA2 when available; for `.rar`, uses installed WinRAR/RAR with RAR5, solid mode, and best compression
-- `extreme`: LPC-only maximum practical ratio with automatic 64-256 MiB blocks, 32-128 MiB LZMA dictionaries, and one compression worker
-- `auto`: content-based candidate set
+Extreme mode automatically selects 16-256 MiB blocks with tiered 8-128 MiB Zstd long-distance windows and LZMA dictionaries. It requires at least 256 MiB of available compression memory and does not accept an explicit block size.
 
-Methods:
+Built-in or optional method IDs:
 
 - `RAW`
 - `LZ4_FAST`
@@ -113,107 +145,86 @@ Methods:
 - `ZPAQ`
 - `BSC`
 
-`BLOSC2` is built in through `Blosc2.PInvoke`. `ZPAQ` and `BSC` are optional external-command backends. They are only registered when both command templates are set:
+`BLOSC2` is built in. `ZPAQ` and `BSC` are optional external-command backends and are registered only when their command templates are configured.
 
-- `LAPLACE_ZPAQ_COMPRESS_COMMAND`
-- `LAPLACE_ZPAQ_DECOMPRESS_COMMAND`
-- `LAPLACE_BSC_COMPRESS_COMMAND`
-- `LAPLACE_BSC_DECOMPRESS_COMMAND`
+See:
 
-Each template must read `{input}` and write `{output}`.
+- [Adaptive compression](docs/ADAPTIVE_COMPRESSION.md)
+- [Ultra Ratio benchmark](docs/ULTRA_RATIO_BENCHMARK.md)
 
-Important detail: `LZMA_MAX` now uses a real LZMA block compressor.
-
-See [docs/ADAPTIVE_COMPRESSION.md](docs/ADAPTIVE_COMPRESSION.md).
+The published benchmark is a reproducible synthetic comparison, not a claim that Laplace is generally better than 7-Zip or WinRAR. Real-world results depend on the corpus and machine.
 
 ## CLI
 
-Run from source:
-
-```powershell
-dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- <command>
-```
-
-After install:
+After installation:
 
 ```powershell
 laplace <command>
 ```
 
-Common commands:
+From source:
 
 ```powershell
-laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] --mode fast|balanced|maximum|intensive|compressed|extreme|auto [--volume-size 700M]
-laplace compress-beside <input_path> --mode balanced
-laplace compress-beside <input_path> --mode extreme --verify
-laplace estimate <input_path...>
-laplace extract <archive> <destination> --overwrite --no-verify
-laplace list <archive>
-laplace info <archive>
-laplace test <archive>
-laplace add <archive.lpc> <file-or-folder>
-laplace freshen <archive.lpc> <file-or-folder>
-laplace delete <archive.lpc> <entry...>
-laplace rename <archive.lpc> <old> <new>
-laplace comment <archive.lpc> --set "text"
-laplace lock <archive.lpc>
-laplace find <archive> --name "*.txt" --text "needle"
-laplace view <archive> <entry>
-laplace repair <archive.lpc|archive.rar>
-laplace benchmark <input_path>
-laplace open <archive>
-laplace extract-here <archive>
-laplace extract-to-folder <archive> <destination>
-laplace extract-to-named-folder <archive>
-laplace extract-dialog <archive>
-laplace iso-to-drive-dialog <image.iso>
-laplace integrate install|status|uninstall
+dotnet run --project .\src\Laplace.Cli\Laplace.Cli.csproj -- <command>
 ```
 
-Password inputs:
+Common workflows:
+
+```powershell
+# Create an LPC archive
+laplace compress .\input .\backup.lpc --mode balanced --verify
+
+# Create an encrypted archive with hidden metadata
+laplace compress .\input .\private.lpc --encrypt --hide-names --verify
+
+# Maximum practical LPC ratio
+laplace compress .\input .\archive.lpc --mode extreme --verify
+
+# Inspect and test
+laplace list .\archive.lpc
+laplace info .\archive.lpc
+laplace test .\archive.lpc
+
+# Extract
+laplace extract .\archive.lpc .\output --overwrite
+
+# Manage LPC contents
+laplace add .\archive.lpc .\new-files
+laplace freshen .\archive.lpc .\changed-files
+laplace delete .\archive.lpc "old/**"
+laplace rename .\archive.lpc old.txt new.txt
+
+# Search, compare, and repair
+laplace find .\archive.lpc --name "*.txt" --text "needle"
+laplace diff .\before.lpc .\after.lpc
+laplace repair .\damaged.lpc
+```
+
+Other commands include `estimate`, `comment`, `lock`, `view`, `merge`, `split`, `benchmark`, `open`, `extract-here`, `extract-to-folder`, `extract-dialog`, `iso-to-drive-dialog`, and `integrate`.
+
+### Password Inputs
 
 - `--password <value>`
 - `--password-file <path>`
-- `--encrypt` for prompting during create workflows
+- `--keyfile <path>` for LPC archives
+- `--encrypt` for an interactive create prompt
 
-Non-interactive runs must use explicit password inputs.
+Non-interactive runs must provide explicit password or keyfile input.
 
-LPC-specific creation options:
+### Automation
 
-- `--hide-names` encrypts file and block tables and implies an encrypted archive.
-- `--recovery-percent <1-100>` appends Reed-Solomon recovery data.
-- `--threads <N>` controls parallel solid-block compression.
-- `--mode extreme` chooses block and dictionary sizes automatically from available memory, requires at least 256 MiB, and cannot be combined with `--block-size`.
-- Extreme archives remain normal LPC archives; per-block LZMA properties carry the larger dictionary settings without a format-version change.
+Major reporting and workflow commands support:
 
-Multi-volume creation:
+- `--json`
+- `--dry-run`
+- `--from-file`
+- `--quiet`
 
-- `--volume-size <size>` creates true multi-volume `.7z` or `.rar` output, such as `backup.7z.001` or `backup.part1.rar`.
-- Multi-volume `.7z` requires installed 7-Zip command-line tools.
-- Multi-volume `.rar` requires installed WinRAR/RAR command-line tools.
-- Native LPC and ZIP multi-volume output are not implemented.
-
-## Desktop UI
-
-The desktop app supports:
-
-- create archive
-- estimate compression
-- open/list archive contents
-- extract archive
-- extract selected entries
-- delete selected LPC entries
-- test archive integrity
-- password prompts
-- metadata-encryption and recovery-record creation options
-- multi-volume 7z/RAR creation presets
-- extract ISO contents to a removable drive
-
-Opening an `.lpc` file from Explorer also opens the desktop UI when shell integration is enabled.
+See [CLI exit codes](docs/CLI_EXIT_CODES.md) and [shell completions](docs/COMPLETIONS.md).
 
 ## Explorer Integration
 
-Install, inspect, or remove integration:
+Manage per-user integration with:
 
 ```powershell
 laplace integrate install
@@ -221,133 +232,106 @@ laplace integrate status
 laplace integrate uninstall
 ```
 
-Shell integration is per-user and writes under `HKCU\Software\Classes`. It does not require administrator privileges.
+Integration is stored under `HKCU\Software\Classes` and does not require administrator privileges.
 
-It registers:
+Registered actions include:
 
-- `.lpc` file association
-- archive actions for `.lpc`, `.zip`, `.7z`, `.rar`, `.cab`, `.iso`, `.tar`, `.gz`, `.tgz`, `.bz2`, `.xz`, `.zst`, and `.lzip`
-- archive actions for open, extract with options, extract here, extract to named folder, test integrity, find, repair, and show details
-- `.iso` actions that include extracting ISO contents to a selected removable drive without formatting or raw-writing the drive
-- create actions for files, folders, and folder background
-- an `Ultra Ratio` create action for verified extreme-mode LPC output
+- open and inspect archives
+- extract with options, here, or to a named folder
+- test integrity
+- find entries
+- repair supported archives
+- create archives from files, folders, or folder backgrounds
+- create a verified Extreme-mode LPC archive through `Ultra Ratio`
+- extract ISO contents to a removable drive
 
-See [docs/SHELL_INTEGRATION.md](docs/SHELL_INTEGRATION.md).
+See [Explorer integration](docs/SHELL_INTEGRATION.md).
 
-## Extraction Safety
+## Security
 
-Laplace blocks common unsafe archive paths:
+Extraction rejects:
 
-- absolute paths
-- path traversal paths
+- absolute archive paths
+- path traversal
+- alternate data streams
 - Windows reserved device names
-- alternate data stream syntax
 - control characters
 - unsafe trailing spaces or dots
-- extraction through existing Windows reparse points
+- writes through existing reparse points such as symlinks and junctions
 
-For LPC archives, Laplace also validates header framing, block offsets, block CRC32C, decompressed block sizes, file SHA-256, and AES-GCM authentication for encrypted payloads.
-
-## Install
-
-Download `LaplaceSetup.exe` from a GitHub Release and run it.
-
-The installer:
-
-- installs to `%LOCALAPPDATA%\Laplace`
-- includes `laplace.exe`, `laplace-gui.exe`, docs, assets, and runtime dependencies
-- can register `.lpc` association
-- can add the Explorer context submenu
-
-For local builds, the root `Setup.exe` file is generated output and should be refreshed from `artifacts\installer\LaplaceSetup.exe` when needed.
+Encrypted LPC payload blocks and metadata use AES-256-GCM authentication. Password confirmation comparisons use fixed-time equality. LPC integrity checks validate framing, offsets, CRC32C, decompressed sizes, SHA-256, and encrypted authentication tags.
 
 ## Build From Source
 
-Prerequisites:
+Requirements:
 
 - Windows
-- .NET SDK 8.0+
+- .NET SDK 8.0 or newer
 
-Setup, build, and test:
+Run the standard setup:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-Manual commands:
+Or run each step:
 
 ```powershell
 dotnet restore
-dotnet build Laplace.sln
-dotnet test tests\Laplace.Tests\Laplace.Tests.csproj
+dotnet build Laplace.sln -c Release --no-restore
+dotnet test Laplace.sln -c Release --no-build
 ```
 
-## Build Installer
+## Packaging
 
-Prerequisites:
+### Installer
 
-- Inno Setup 6
+Requires Inno Setup 6:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version <version> `
+  -Version 1.10.0 `
   -SelfContained
 ```
 
-Output:
+Output: `artifacts\installer\LaplaceSetup.exe`
 
-- `artifacts\installer\LaplaceSetup.exe`
+### MSIX
 
-## Build MSIX
-
-Prerequisites:
-
-- Windows SDK with `makeappx.exe` and `signtool.exe`
+Requires Windows SDK tools:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installer\build-msix.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version <version> `
+  -Version 1.10.0.0 `
   -PackageName Laplace.Project `
   -Publisher "CN=LaplaceProject" `
   -SelfContained
 ```
 
-Output:
+Output: `artifacts\msix\Laplace_1.10.0.0_win-x64.msix`
 
-- `artifacts\msix\Laplace_<version>_<runtime>.msix`
+The CLI, desktop executable, installer, and MSIX package use the same transparent Laplace logo source.
 
-See [docs/MSIX.md](docs/MSIX.md).
+See [MSIX packaging](docs/MSIX.md).
 
-## Verify Release
+## Release Verification
 
-Run the full verification path before tagging:
+The complete release path builds and tests the solution, builds installer and MSIX packages, generates checksums, silently installs the generated installer, runs archive smoke tests, verifies fallback extraction, and checks Explorer integration while restoring previous local registration.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version <version> `
-  -MsixVersion <version>.0 `
+  -Version 1.10.0 `
+  -MsixVersion 1.10.0.0 `
   -SelfContained
 ```
 
-This builds and tests the solution, builds installer and MSIX artifacts, generates checksums, silently installs the generated installer, runs archive smoke tests, verifies Windows `tar.exe` fallback extraction, and checks shell integration install/uninstall while restoring previous local registration.
-
-## Release Process
-
-Releases are automated by GitHub Actions.
-
-```powershell
-git tag -a v<version> -m "Laplace v<version>"
-git push origin main
-git push origin v<version>
-```
-
-Release assets:
+Git tags matching `v*` trigger the GitHub Actions release workflow and publish:
 
 - `LaplaceSetup.exe`
 - `Laplace_<version>_win-x64.msix`
@@ -356,22 +340,22 @@ Release assets:
 ## Repository Layout
 
 ```text
-Laplace.sln
-AGENT.md
-assets/
-docs/
-installer/
-scripts/
-src/
-  Laplace.Core/
-  Laplace.Compression/
-  Laplace.Cli/
-  Laplace.Desktop/
-  Laplace.ShellIntegration/
-tests/
-  Laplace.Tests/
+assets/       Logo and Windows icon assets
+docs/         Format, CLI, integration, benchmark, and packaging documentation
+installer/    Inno Setup and MSIX build scripts
+scripts/      Verification, benchmarks, and shell completions
+src/          Core, compression, CLI, desktop, and shell integration projects
+tests/        Unit, round-trip, safety, and CLI black-box tests
 ```
+
+## Current Limitations
+
+- Native LPC multi-volume output is not implemented.
+- LPC self-extracting archives are not implemented.
+- RAR creation requires WinRAR or RAR command-line tools.
+- Advanced 7z and multi-volume 7z output require installed 7-Zip tools.
+- Optional ZPAQ and BSC methods require configured external commands.
 
 ## License
 
-GPLv3. See [LICENSE](LICENSE).
+Laplace is licensed under GPLv3. See [LICENSE](LICENSE).

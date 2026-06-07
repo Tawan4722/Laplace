@@ -4,6 +4,20 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 1.10.0 - 2026-06-07
+
+- Tuned LPC `extreme` mode with tiered Zstd long-distance matching, improving large distant-repeat compression while reducing peak memory.
+- Added a reproducible Ultra Ratio benchmark harness with ratio, speed, selected-method, and peak-working-set reporting.
+- Replaced the logo backdrop with true transparency across PNG, ICO, executable, installer, README, and MSIX assets.
+- Replaced placeholder MSIX tile images with branded Laplace logo assets.
+- Embedded the release version into published CLI and desktop binaries.
+- Rewrote the README around installation, desktop workflows, CLI usage, supported formats, security, compression, and release verification.
+
+## 1.9.1 - 2026-06-07
+
+- Added a centered operation overlay with progress details and cancellation for desktop archive operations.
+- Rebuilt the archive password dialog with archive context, show-password support, Caps Lock feedback, input validation, and incorrect-password retry.
+
 ## 1.9.0 - 2026-06-06
 
 - Added true multi-volume `.7z` and `.rar` creation through `--volume-size` and desktop creation presets.

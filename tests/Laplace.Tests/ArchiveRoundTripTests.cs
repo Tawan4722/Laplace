@@ -219,9 +219,9 @@ public sealed class ArchiveRoundTripTests
         var estimate = await new UniversalArchiveService(new CompressorRegistry())
             .EstimateAsync([sourceFile], options);
 
-        Assert.Equal(64 * 1024 * 1024, options.BlockSizeBytes);
+        Assert.Equal(16 * 1024 * 1024, options.BlockSizeBytes);
         Assert.Equal(1, options.Threads);
-        Assert.Equal(32 * 1024 * 1024, options.LzmaDictionarySizeBytes);
+        Assert.Equal(8 * 1024 * 1024, options.LzmaDictionarySizeBytes);
         Assert.Contains("long-distance matches", estimate.Notes);
         Assert.True(estimate.EstimatedCompressedSize < estimate.OriginalSize);
     }
@@ -299,10 +299,16 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Theory]
-    [InlineData(1024, 256, 128)]
-    [InlineData(512, 128, 64)]
-    [InlineData(256, 64, 32)]
-    public void ExtremePolicy_SelectsMemoryTierAndSingleWorker(int availableMiB, int blockMiB, int dictionaryMiB)
+    [InlineData(1024, 256, 128, 15, 27, true)]
+    [InlineData(512, 128, 64, 9, 26, false)]
+    [InlineData(256, 16, 8, 1, 23, false)]
+    public void ExtremePolicy_SelectsMemoryTierAndSingleWorker(
+        int availableMiB,
+        int blockMiB,
+        int dictionaryMiB,
+        int zstdLevel,
+        int zstdWindowLog,
+        bool forceLongDistanceTrial)
     {
         var options = new CreateArchiveOptions
         {
@@ -314,9 +320,16 @@ public sealed class ArchiveRoundTripTests
 
         Assert.Equal(blockMiB * 1024 * 1024, settings.BlockSizeBytes);
         Assert.Equal(dictionaryMiB * 1024 * 1024, settings.DictionarySizeBytes);
+        Assert.Equal(zstdLevel, settings.ZstdLevel);
+        Assert.Equal(zstdWindowLog, settings.ZstdWindowLog);
+        Assert.Equal(forceLongDistanceTrial, settings.ForceLongDistanceTrial);
         Assert.Equal(1, settings.Threads);
         Assert.Equal(1, options.Threads);
         Assert.Equal(273, options.LzmaFastBytes);
+        Assert.Equal(zstdLevel, options.ZstdLevel);
+        Assert.Equal(zstdWindowLog, options.ZstdWindowLog);
+        Assert.True(options.ZstdLongDistanceMatching);
+        Assert.Equal(forceLongDistanceTrial, options.ZstdForceLongDistanceTrial);
     }
 
     [Fact]
@@ -347,6 +360,32 @@ public sealed class ArchiveRoundTripTests
 
         Assert.True(compressed.Length > 5);
         Assert.Equal(dictionarySize, BitConverter.ToInt32(compressed, 1));
+    }
+
+    [Fact]
+    public void ConfigurableZstd_LongDistanceMode_RoundTripsDistantReuse()
+    {
+        var repeated = new byte[1024 * 1024];
+        var filler = new byte[8 * 1024 * 1024];
+        new Random(31415).NextBytes(repeated);
+        new Random(92653).NextBytes(filler);
+        var data = repeated.Concat(filler).Concat(repeated).ToArray();
+        var defaultCompressor = new Laplace.Compression.Compressors.ZstdCompressor(
+            CompressionMethod.ZstdHigh,
+            15);
+        var longDistanceCompressor = new Laplace.Compression.Compressors.ZstdCompressor(
+            CompressionMethod.ZstdHigh,
+            15,
+            windowLog: 24,
+            enableLongDistanceMatching: true);
+
+        var defaultCompressed = defaultCompressor.Compress(data);
+        var longDistanceCompressed = longDistanceCompressor.Compress(data);
+
+        Assert.True(
+            longDistanceCompressed.Length < defaultCompressed.Length - (512 * 1024),
+            $"Long-distance={longDistanceCompressed.Length}, default={defaultCompressed.Length}");
+        Assert.Equal(data, longDistanceCompressor.Decompress(longDistanceCompressed, data.Length));
     }
 
     [Theory]
@@ -534,7 +573,7 @@ public sealed class ArchiveRoundTripTests
             await service.CompressAsync([sourcePath], extremePath, new CreateArchiveOptions
             {
                 Mode = CompressionMode.Extreme,
-                AvailableCompressionMemoryBytes = 256L * 1024 * 1024,
+                AvailableCompressionMemoryBytes = 1024L * 1024 * 1024,
                 VerifyAfterCompression = false
             });
 
@@ -542,6 +581,9 @@ public sealed class ArchiveRoundTripTests
                 new FileInfo(extremePath).Length < new FileInfo(compressedPath).Length - (1024 * 1024),
                 $"Extreme={new FileInfo(extremePath).Length}, compressed={new FileInfo(compressedPath).Length}");
             Assert.Equal(1, new ArchiveReader().ReadHeaderOnly(extremePath).FormatVersion);
+            Assert.Contains(
+                new ArchiveReader().Read(extremePath).BlockEntries,
+                block => block.CompressionMethod == CompressionMethod.ZstdHigh);
 
             await service.ExtractAsync(extremePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
             Assert.Equal(

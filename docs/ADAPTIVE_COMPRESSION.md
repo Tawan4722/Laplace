@@ -18,7 +18,7 @@ The adaptive selector uses:
    - `maximum` -> prioritize `BSC` when configured, then `LZMA_MAX` / `ZSTD_HIGH`
    - `intensive` -> try the strongest available candidates, including configured `ZPAQ` / `BSC`, even for data that looks pre-compressed
    - `compressed` -> strongest ratio-first profile; for `.7z` output, prefer installed 7-Zip solid LZMA2; for `.rar`, prefer installed WinRAR/RAR with RAR5 solid best compression
-   - `extreme` -> LPC-only, single-worker large-block compression with an automatically selected 32-128 MiB LZMA dictionary and strict ratio-first scoring
+   - `extreme` -> LPC-only, single-worker large-block compression with tiered 8-128 MiB Zstd long-distance windows and LZMA dictionaries
    - `auto` -> entropy/repetition/file-type-based candidate set
 3. Every block is checked after compression:
    - if `compressed_size >= original_size`, store block as `RAW`.
@@ -48,8 +48,10 @@ Weights are implemented and can be tuned in code.
 - `maximum`: favor smaller size
 - `intensive`: spend more CPU on ratio-focused candidate testing
 - `compressed`: strongest available ratio-first profile
-- `extreme`: maximum practical native LPC ratio, using up to approximately 1 GiB of compression memory
+- `extreme`: maximum practical native LPC ratio, using tiered long-distance windows and up to approximately 1 GiB of compression memory
 - `auto`: choose per block/file using content signals
+
+For `extreme`, LZMA remains a sampled candidate, but large blocks and tiers requiring an LZMA dictionary above 8 MiB use the configured long-distance Zstd path if LZMA wins. This avoids the managed LZMA encoder exceeding the selected memory tier.
 
 ## Advanced Codec Candidates
 

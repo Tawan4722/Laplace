@@ -35,4 +35,8 @@ public sealed class CreateArchiveOptions
     internal long? AvailableCompressionMemoryBytes { get; set; }
     internal int? LzmaDictionarySizeBytes { get; set; }
     internal int LzmaFastBytes { get; set; } = 128;
+    internal int ZstdLevel { get; set; } = 15;
+    internal int? ZstdWindowLog { get; set; }
+    internal bool ZstdLongDistanceMatching { get; set; }
+    internal bool ZstdForceLongDistanceTrial { get; set; }
 }

@@ -3,7 +3,7 @@
   #define AppVersion "0.1.0"
 #endif
 #define AppPublisher "Laplace Project"
-#define AppURL "https://github.com/LaplaceProject/Laplace"
+#define AppURL "https://github.com/Tawan4722/Laplace"
 #define AppExeName "laplace.exe"
 #define AppGuiExeName "laplace-gui.exe"
 #define AppId "{{F0EF4E86-D377-46E9-983A-50A83D5E6E52}"
@@ -57,7 +57,7 @@ Name: "{autoprograms}\Laplace"; Filename: "{app}\{#AppGuiExeName}"; Tasks: start
 Filename: "{app}\{#AppExeName}"; Parameters: "integrate install --cli-path ""{app}\{#AppExeName}"""; Flags: runhidden waituntilterminated; Tasks: shellintegration
 
 [UninstallRun]
-Filename: "{app}\{#AppExeName}"; Parameters: "integrate uninstall"; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{app}\{#AppExeName}"; Parameters: "integrate uninstall"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "LaplaceShellIntegration"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\Laplace\cache"
