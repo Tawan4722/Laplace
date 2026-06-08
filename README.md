@@ -13,6 +13,8 @@ Laplace is a high-performance, Windows-first archive manager featuring its nativ
 - [Supported Formats](#supported-formats)
 - [Desktop Application](#desktop-application)
 - [CLI Reference](#cli-reference)
+- [LPC Format](#lpc-format)
+- [Compression](#compression)
 - [Security](#security)
 - [Documentation](#documentation)
 - [Development & Contributing](#development--contributing)
@@ -54,9 +56,9 @@ Laplace is built for efficiency, implementing its own compression pipeline rathe
 | Format | Support |
 | --- | --- |
 | `.lpc` | Native |
-| `.zip` | Built-in (with AES-256) |
-| `.7z` | Built-in |
-| `.rar` | External tools required |
+| `.zip` | Built in, including AES-256 encryption |
+| `.7z` | Built in for standard paths; installed 7-Zip is used for advanced or multi-volume output |
+| `.rar` | Requires installed `rar.exe` or `WinRAR.exe` |
 
 ### Read, List, Test, & Extract
 Laplace supports a wide array of formats, falling back to Windows native tools where necessary for non-password external archives.
@@ -88,6 +90,12 @@ laplace repair .\damaged.lpc
 ```
 
 For a comprehensive guide, see [CLI Exit Codes](docs/CLI_EXIT_CODES.md).
+
+## LPC Format
+LPC is Laplace's native archive format. See [LPC format documentation](docs/LPC_FORMAT.md).
+
+## Compression
+Laplace analyzes file hints and sampled data before selecting a compressor per block. See [Adaptive compression](docs/ADAPTIVE_COMPRESSION.md) and [Ultra Ratio benchmark](docs/ULTRA_RATIO_BENCHMARK.md).
 
 ## Security
 
