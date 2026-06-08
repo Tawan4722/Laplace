@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>laplace</AssemblyName>
+    <RootNamespace>Laplace.Cli</RootNamespace>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>..\..\assets\laplace-logo.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Laplace.Core\Laplace.Core.csproj" />
+    <ProjectReference Include="..\Laplace.Compression\Laplace.Compression.csproj" />
+    <ProjectReference Include="..\Laplace.ShellIntegration\Laplace.ShellIntegration.csproj" />
+  </ItemGroup>
+</Project>

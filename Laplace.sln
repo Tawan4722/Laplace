@@ -1,0 +1,51 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.35013.160
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.Core", "src\Laplace.Core\Laplace.Core.csproj", "{A42D4691-95D4-48A5-A325-CA9B0A6D037B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.Compression", "src\Laplace.Compression\Laplace.Compression.csproj", "{4A5718D7-B25F-441A-8B95-CA6E86A983E9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.Cli", "src\Laplace.Cli\Laplace.Cli.csproj", "{A6827963-CC89-499D-A8BA-226B5DB57F3E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.ShellIntegration", "src\Laplace.ShellIntegration\Laplace.ShellIntegration.csproj", "{8B882553-DB40-49B9-B6D1-B0689EEA7482}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.Tests", "tests\Laplace.Tests\Laplace.Tests.csproj", "{29086C18-C4E2-4D5A-91C1-DB3D7B8D90BF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.Desktop", "src\Laplace.Desktop\Laplace.Desktop.csproj", "{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A42D4691-95D4-48A5-A325-CA9B0A6D037B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A42D4691-95D4-48A5-A325-CA9B0A6D037B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A42D4691-95D4-48A5-A325-CA9B0A6D037B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A42D4691-95D4-48A5-A325-CA9B0A6D037B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4A5718D7-B25F-441A-8B95-CA6E86A983E9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4A5718D7-B25F-441A-8B95-CA6E86A983E9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4A5718D7-B25F-441A-8B95-CA6E86A983E9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4A5718D7-B25F-441A-8B95-CA6E86A983E9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A6827963-CC89-499D-A8BA-226B5DB57F3E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A6827963-CC89-499D-A8BA-226B5DB57F3E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A6827963-CC89-499D-A8BA-226B5DB57F3E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A6827963-CC89-499D-A8BA-226B5DB57F3E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8B882553-DB40-49B9-B6D1-B0689EEA7482}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B882553-DB40-49B9-B6D1-B0689EEA7482}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B882553-DB40-49B9-B6D1-B0689EEA7482}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B882553-DB40-49B9-B6D1-B0689EEA7482}.Release|Any CPU.Build.0 = Release|Any CPU
+		{29086C18-C4E2-4D5A-91C1-DB3D7B8D90BF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{29086C18-C4E2-4D5A-91C1-DB3D7B8D90BF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{29086C18-C4E2-4D5A-91C1-DB3D7B8D90BF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{29086C18-C4E2-4D5A-91C1-DB3D7B8D90BF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

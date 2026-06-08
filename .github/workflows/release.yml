@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package Release
+    runs-on: windows-latest
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Resolve release versions
+        id: version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart("v")
+          $parts = $version.Split(".")
+          if ($parts.Count -eq 3) {
+            $msixVersion = "$version.0"
+          }
+          elseif ($parts.Count -eq 4) {
+            $msixVersion = $version
+          }
+          else {
+            throw "Release tag must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH.BUILD. Got: $tag"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "msix_version=$msixVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Verify release package
+        shell: pwsh
+        run: |
+          .\scripts\verify-release.ps1 `
+            -Configuration Release `
+            -Runtime win-x64 `
+            -Version "${{ steps.version.outputs.version }}" `
+            -MsixVersion "${{ steps.version.outputs.msix_version }}" `
+            -PackageName Laplace.Project `
+            -Publisher "CN=LaplaceProject" `
+            -SelfContained
+
+      - name: Publish release assets
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --title "Laplace $tag" --generate-notes
+          }
+
+          gh release upload $tag `
+            "artifacts\installer\LaplaceSetup.exe" `
+            "artifacts\msix\Laplace_${{ steps.version.outputs.msix_version }}_win-x64.msix" `
+            "artifacts\SHA256SUMS.txt" `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber
