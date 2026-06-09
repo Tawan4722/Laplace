@@ -129,6 +129,14 @@ public sealed class MainForm : Form
         _entriesView.Columns.Add("Method", 130);
         _entriesView.Columns.Add("Encrypted", 80);
         _entriesView.Columns.Add("Path", 360);
+
+        var contextMenu = new ContextMenuStrip();
+        contextMenu.Items.Add("&Extract...", null, async (_, _) => await ShowExtractDialogAsync().ConfigureAwait(true));
+        contextMenu.Items.Add("&Test", null, async (_, _) => await TestCurrentArchiveAsync().ConfigureAwait(true));
+        contextMenu.Items.Add("-");
+        contextMenu.Items.Add("&Delete", null, async (_, _) => await DeleteSelectedEntriesAsync().ConfigureAwait(true));
+        _entriesView.ContextMenuStrip = contextMenu;
+
         _entriesView.DoubleClick += async (_, _) =>
         {
             if (_currentArchivePath is not null)
