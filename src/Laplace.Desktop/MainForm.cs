@@ -12,7 +12,6 @@ public sealed class MainForm : Form
     private readonly CompressorRegistry _compressorRegistry = new();
     private readonly UniversalArchiveService _archives;
     private readonly LpcArchiveMutationService _mutator;
-    private readonly TextBox _archivePathText = new();
     private readonly ListView _entriesView = new();
     private readonly ToolStripStatusLabel _statusLabel = new();
     private readonly ToolStripStatusLabel _summaryLabel = new();
@@ -40,20 +39,15 @@ public sealed class MainForm : Form
         Icon = LoadAppIcon();
         AllowDrop = true;
 
-        var menu = BuildMenu();
         var toolbar = BuildToolbar();
-        var addressPanel = BuildAddressPanel();
         var status = BuildStatusBar();
 
         ConfigureEntryList();
 
         Controls.Add(_entriesView);
-        Controls.Add(addressPanel);
         Controls.Add(toolbar);
-        Controls.Add(menu);
         Controls.Add(status);
         Controls.Add(_operationOverlay);
-        MainMenuStrip = menu;
 
         DragEnter += MainForm_DragEnter;
         DragDrop += MainForm_DragDrop;
@@ -63,41 +57,6 @@ public sealed class MainForm : Form
         Shown += (_, _) => ApplyStartupArgs(args);
     }
 
-    private MenuStrip BuildMenu()
-    {
-        var menu = new MenuStrip();
-        var file = new ToolStripMenuItem("&File");
-        file.DropDownItems.Add("&Open archive...", null, async (_, _) => await ChooseAndOpenArchiveAsync().ConfigureAwait(true));
-        file.DropDownItems.Add("&Create archive...", null, async (_, _) => await ShowCreateDialogAsync([]).ConfigureAwait(true));
-        file.DropDownItems.Add("&Estimate compression...", null, async (_, _) => await ChooseAndEstimateAsync().ConfigureAwait(true));
-        file.DropDownItems.Add(new ToolStripSeparator());
-        file.DropDownItems.Add("E&xit", null, (_, _) => Close());
-
-        var commands = new ToolStripMenuItem("&Commands");
-        commands.DropDownItems.Add("&Extract to...", null, async (_, _) => await ShowExtractDialogAsync().ConfigureAwait(true));
-        commands.DropDownItems.Add("&Test archive", null, async (_, _) => await TestCurrentArchiveAsync().ConfigureAwait(true));
-        commands.DropDownItems.Add("&Archive information", null, (_, _) => ShowArchiveInfo());
-
-        var tools = new ToolStripMenuItem("&Tools");
-        tools.DropDownItems.Add("&Extract ISO to removable drive...", null, async (_, _) => await ChooseAndExtractIsoToDriveAsync().ConfigureAwait(true));
-        tools.DropDownItems.Add("&Clear password", null, (_, _) =>
-        {
-            _currentPassword = null;
-            SetStatus("Password cleared.", 0);
-        });
-
-        var help = new ToolStripMenuItem("&Help");
-        help.DropDownItems.Add("&About Laplace", null, (_, _) => MessageBox.Show(
-            this,
-            "Laplace archive manager\nNative .lpc and common archive support.",
-            "About Laplace",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information));
-
-        menu.Items.AddRange([file, commands, tools, help]);
-        menu.Dock = DockStyle.Top;
-        return menu;
-    }
 
     private ToolStrip BuildToolbar()
     {
@@ -105,76 +64,34 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Top,
             AutoSize = false,
-            Height = 62,
+            Height = 48,
             GripStyle = ToolStripGripStyle.Hidden,
-            ImageScalingSize = new Size(24, 24),
+            ImageScalingSize = new Size(16, 16),
             Padding = new Padding(6, 4, 6, 4)
         };
 
-        toolbar.Items.Add(CreateToolButton("Add", SystemIcons.Application, async (_, _) => await ShowCreateDialogAsync([]).ConfigureAwait(true)));
-        toolbar.Items.Add(CreateToolButton("Estimate", SystemIcons.Information, async (_, _) => await ChooseAndEstimateAsync().ConfigureAwait(true)));
+        toolbar.Items.Add(CreateToolButton("Open", SystemIcons.WinLogo, async (_, _) => await ChooseAndOpenArchiveAsync().ConfigureAwait(true)));
+        toolbar.Items.Add(CreateToolButton("Create", SystemIcons.Application, async (_, _) => await ShowCreateDialogAsync([]).ConfigureAwait(true)));
+        toolbar.Items.Add(new ToolStripSeparator());
+        
         _extractButton.Text = "Extract";
         _extractButton.Image = SystemIcons.Shield.ToBitmap();
-        _extractButton.TextImageRelation = TextImageRelation.ImageAboveText;
-        _extractButton.AutoSize = false;
-        _extractButton.Size = new Size(72, 52);
         _extractButton.Click += async (_, _) => await ShowExtractDialogAsync().ConfigureAwait(true);
         toolbar.Items.Add(_extractButton);
 
         _testButton.Text = "Test";
         _testButton.Image = SystemIcons.Information.ToBitmap();
-        _testButton.TextImageRelation = TextImageRelation.ImageAboveText;
-        _testButton.AutoSize = false;
-        _testButton.Size = new Size(72, 52);
         _testButton.Click += async (_, _) => await TestCurrentArchiveAsync().ConfigureAwait(true);
         toolbar.Items.Add(_testButton);
 
-        toolbar.Items.Add(CreateToolButton("Open", SystemIcons.WinLogo, async (_, _) => await ChooseAndOpenArchiveAsync().ConfigureAwait(true)));
-
         _infoButton.Text = "Info";
         _infoButton.Image = SystemIcons.Question.ToBitmap();
-        _infoButton.TextImageRelation = TextImageRelation.ImageAboveText;
-        _infoButton.AutoSize = false;
-        _infoButton.Size = new Size(72, 52);
         _infoButton.Click += (_, _) => ShowArchiveInfo();
         toolbar.Items.Add(_infoButton);
 
-        toolbar.Items.Add(new ToolStripSeparator());
-        toolbar.Items.Add(CreateToolButton("Delete", SystemIcons.Error, async (_, _) => await DeleteSelectedEntriesAsync().ConfigureAwait(true)));
-        toolbar.Items.Add(CreateToolButton("Find", SystemIcons.Asterisk, (_, _) => FocusSearch()));
         return toolbar;
     }
 
-    private Panel BuildAddressPanel()
-    {
-        var panel = new Panel
-        {
-            Dock = DockStyle.Top,
-            Height = 38,
-            Padding = new Padding(8, 6, 8, 5)
-        };
-        var label = new Label
-        {
-            Text = "Archive:",
-            Dock = DockStyle.Left,
-            Width = 58,
-            TextAlign = ContentAlignment.MiddleLeft
-        };
-        var browse = new Button
-        {
-            Text = "...",
-            Dock = DockStyle.Right,
-            Width = 38
-        };
-        browse.Click += async (_, _) => await ChooseAndOpenArchiveAsync().ConfigureAwait(true);
-        _archivePathText.Dock = DockStyle.Fill;
-        _archivePathText.ReadOnly = true;
-
-        panel.Controls.Add(_archivePathText);
-        panel.Controls.Add(browse);
-        panel.Controls.Add(label);
-        return panel;
-    }
 
     private StatusStrip BuildStatusBar()
     {
@@ -645,14 +562,13 @@ public sealed class MainForm : Form
 
     private void UpdateArchiveState(string? archivePath, ArchiveSummary? summary)
     {
-        _archivePathText.Text = archivePath ?? string.Empty;
         var hasArchive = archivePath is not null;
         _extractButton.Enabled = hasArchive;
         _testButton.Enabled = hasArchive;
         _infoButton.Enabled = hasArchive;
         _summaryLabel.Text = summary is null
-            ? "No archive"
-            : $"{summary.FileCount} files, {summary.FolderCount} folders, {FormatBytes(summary.CompressedSize)} packed";
+            ? "Ready"
+            : $"{Path.GetFileName(archivePath)} | {summary.FileCount} files, {summary.FolderCount} folders, {FormatBytes(summary.CompressedSize)} packed";
     }
 
     private void SetBusy(bool busy, bool canCancel = false)
