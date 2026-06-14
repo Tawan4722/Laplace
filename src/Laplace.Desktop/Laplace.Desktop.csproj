@@ -3,12 +3,15 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
     <RootNamespace>Laplace.Desktop</RootNamespace>
-    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <ApplicationIcon>..\..\assets\laplace-logo.ico</ApplicationIcon>
     <AssemblyName>laplace-gui</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Laplace.Core\Laplace.Core.csproj" />
     <ProjectReference Include="..\Laplace.Compression\Laplace.Compression.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MaterialDesignThemes" Version="5.3.2" />
   </ItemGroup>
 </Project>

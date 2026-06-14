@@ -1,0 +1,110 @@
+<Window x:Class="Laplace.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        Title="Laplace" Height="680" Width="1080"
+        WindowStartupLocation="CenterScreen"
+        AllowDrop="True" Drop="Window_Drop"
+        Background="{DynamicResource MaterialDesignPaper}"
+        TextElement.Foreground="{DynamicResource MaterialDesignBody}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Menu -->
+        <Menu Grid.Row="0">
+            <MenuItem Header="_File">
+                <MenuItem Header="_Open archive..." Click="OpenArchive_Click" />
+                <MenuItem Header="_Create archive..." Click="CreateArchive_Click" />
+                <MenuItem Header="_Estimate compression..." Click="Estimate_Click" />
+                <Separator />
+                <MenuItem Header="E_xit" Click="Exit_Click" />
+            </MenuItem>
+            <MenuItem Header="_Commands">
+                <MenuItem Header="_Extract to..." Click="Extract_Click" />
+                <MenuItem Header="_Test archive" Click="Test_Click" />
+                <MenuItem Header="Archive _information" Click="Info_Click" />
+            </MenuItem>
+            <MenuItem Header="_Tools">
+                <MenuItem Header="Extract _ISO to removable drive..." Click="IsoToDrive_Click" />
+                <MenuItem Header="Clear _password" Click="ClearPassword_Click" />
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_About Laplace" Click="About_Click" />
+            </MenuItem>
+        </Menu>
+
+        <!-- Toolbar -->
+        <ToolBarTray Grid.Row="1">
+            <ToolBar Style="{DynamicResource MaterialDesignToolBar}" ClipToBounds="False">
+                <Button Content="Add" Click="CreateArchive_Click" Margin="4,0" />
+                <Button Content="Estimate" Click="Estimate_Click" Margin="4,0" />
+                <Button Content="Extract" Click="Extract_Click" Margin="4,0" />
+                <Button Content="Test" Click="Test_Click" Margin="4,0" />
+                <Button Content="Open" Click="OpenArchive_Click" Margin="4,0" />
+                <Button Content="Info" Click="Info_Click" Margin="4,0" />
+                <Separator Margin="8,0" />
+                <Button Content="Delete" Click="Delete_Click" Margin="4,0" Foreground="Red" />
+            </ToolBar>
+        </ToolBarTray>
+
+        <!-- Address Bar -->
+        <Grid Grid.Row="2" Margin="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Archive:" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBox x:Name="ArchivePathText" Grid.Column="1" IsReadOnly="True" />
+            <Button Content="..." Grid.Column="2" Click="OpenArchive_Click" Margin="8,0,0,0" Width="40" />
+        </Grid>
+
+        <!-- Entries List -->
+        <DataGrid x:Name="EntriesView" Grid.Row="3" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" MouseDoubleClick="EntriesView_MouseDoubleClick">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="280" />
+                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="110" />
+                <DataGridTextColumn Header="Packed" Binding="{Binding Packed}" Width="110" />
+                <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="90" />
+                <DataGridTextColumn Header="Method" Binding="{Binding Method}" Width="130" />
+                <DataGridTextColumn Header="Encrypted" Binding="{Binding Encrypted}" Width="80" />
+                <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status Bar -->
+        <StatusBar Grid.Row="4">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusLabel" Text="Ready" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem>
+                <TextBlock x:Name="SummaryLabel" Text="No archive" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem>
+                <ProgressBar x:Name="OperationProgress" Width="180" Height="10" Minimum="0" Maximum="100" Visibility="Collapsed" />
+            </StatusBarItem>
+            <StatusBarItem>
+                <Button x:Name="CancelButton" Content="Cancel" Click="Cancel_Click" Visibility="Collapsed" Padding="4,0" Height="22" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <!-- Operation Overlay (replaces the separate control) -->
+        <Grid x:Name="OperationOverlay" Grid.RowSpan="5" Background="#80000000" Visibility="Collapsed">
+            <materialDesign:Card Width="300" Height="150" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <StackPanel VerticalAlignment="Center" Margin="16">
+                    <TextBlock x:Name="OverlayMessage" Text="Working..." HorizontalAlignment="Center" Margin="0,0,0,16" FontSize="16"/>
+                    <ProgressBar x:Name="OverlayProgress" Minimum="0" Maximum="100" Height="20" Margin="0,0,0,16" />
+                    <Button x:Name="OverlayCancelButton" Content="Cancel" Click="Cancel_Click" HorizontalAlignment="Center" Width="100" />
+                </StackPanel>
+            </materialDesign:Card>
+        </Grid>
+    </Grid>
+</Window>

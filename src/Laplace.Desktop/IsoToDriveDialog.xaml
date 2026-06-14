@@ -1,0 +1,29 @@
+<Window x:Class="Laplace.Desktop.IsoToDriveDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        Title="Extract ISO to Removable Drive" Height="250" Width="500"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{DynamicResource MaterialDesignPaper}"
+        TextElement.Foreground="{DynamicResource MaterialDesignBody}">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBox x:Name="IsoInput" materialDesign:HintAssist.Hint="ISO image" Style="{StaticResource MaterialDesignFloatingHintTextBox}" IsReadOnly="True" Margin="0,0,0,16" />
+        
+        <ComboBox x:Name="DrivesCombo" materialDesign:HintAssist.Hint="Drive" Style="{StaticResource MaterialDesignFloatingHintComboBox}" Grid.Row="1" Margin="0,0,0,16" />
+        
+        <CheckBox x:Name="OverwriteCheck" Content="Overwrite existing files with matching names" Grid.Row="2" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="4" Margin="0,16,0,0">
+            <Button x:Name="ExtractButton" Content="Extract" IsDefault="True" Click="Extract_Click" Margin="0,0,8,0" Width="100" />
+            <Button Content="Cancel" IsCancel="True" Style="{StaticResource MaterialDesignOutlinedButton}" Width="80" />
+        </StackPanel>
+    </Grid>
+</Window>
