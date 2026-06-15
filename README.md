@@ -292,7 +292,7 @@ Requires Inno Setup 6:
 powershell -ExecutionPolicy Bypass -File .\installer\build-installer.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version 1.10.0 `
+  -Version 2.1.0 `
   -SelfContained
 ```
 
@@ -306,13 +306,13 @@ Requires Windows SDK tools:
 powershell -ExecutionPolicy Bypass -File .\installer\build-msix.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version 1.10.0.0 `
+  -Version 2.1.0.0 `
   -PackageName Laplace.Project `
   -Publisher "CN=LaplaceProject" `
   -SelfContained
 ```
 
-Output: `artifacts\msix\Laplace_1.10.0.0_win-x64.msix`
+Output: `artifacts\msix\Laplace_2.1.0.0_win-x64.msix`
 
 The CLI, desktop executable, installer, and MSIX package use the same transparent Laplace logo source.
 
@@ -326,8 +326,8 @@ The complete release path builds and tests the solution, builds installer and MS
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-release.ps1 `
   -Configuration Release `
   -Runtime win-x64 `
-  -Version 1.10.0 `
-  -MsixVersion 1.10.0.0 `
+  -Version 2.1.0 `
+  -MsixVersion 2.1.0.0 `
   -SelfContained
 ```
 
