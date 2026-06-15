@@ -268,13 +268,15 @@ Requirements:
 - Windows
 - .NET SDK 8.0 or newer
 
+**Note:** Ensure your development environment has the necessary workloads for desktop and CLI application development installed.
+
 Run the standard setup:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-Or run each step:
+Or run each step manually:
 
 ```powershell
 dotnet restore
