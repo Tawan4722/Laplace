@@ -284,6 +284,7 @@ public sealed class ArchiveEstimator
             CompressionMethod.Blosc2 => 0.88,
             CompressionMethod.Zpaq => 0.05,
             CompressionMethod.Bsc => 0.35,
+            CompressionMethod.Cmix => 0.02,
             _ => 0.50
         };
     }
@@ -302,6 +303,7 @@ public sealed class ArchiveEstimator
             CompressionMethod.Blosc2 => 0.30,
             CompressionMethod.Zpaq => 0.85,
             CompressionMethod.Bsc => 0.78,
+            CompressionMethod.Cmix => 0.95,
             _ => 0.40
         };
     }

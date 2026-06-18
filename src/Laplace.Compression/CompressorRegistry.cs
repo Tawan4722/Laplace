@@ -24,6 +24,7 @@ public sealed class CompressorRegistry : ICompressorRegistry, IConfigurableCompr
 
         TryRegisterExternal(CompressionMethod.Zpaq, "LAPLACE_ZPAQ_COMPRESS_COMMAND", "LAPLACE_ZPAQ_DECOMPRESS_COMMAND");
         TryRegisterExternal(CompressionMethod.Bsc, "LAPLACE_BSC_COMPRESS_COMMAND", "LAPLACE_BSC_DECOMPRESS_COMMAND");
+        TryRegisterExternal(CompressionMethod.Cmix, "LAPLACE_CMIX_COMPRESS_COMMAND", "LAPLACE_CMIX_DECOMPRESS_COMMAND");
     }
 
     public IBlockCompressor GetCompressor(CompressionMethod method)

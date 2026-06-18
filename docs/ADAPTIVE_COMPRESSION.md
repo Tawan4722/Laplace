@@ -80,3 +80,16 @@ BSC is a block-sorting compressor built around Burrows-Wheeler-style transforms.
 Some BSC builds can use GPU acceleration, which makes it interesting for large datasets where high-ratio compression would otherwise take too long on CPU alone. The practical drawback is deployment complexity: GPU acceleration depends on hardware, drivers, native binaries, and a CPU fallback path.
 
 Laplace fit: `BSC` is an optional `maximum`/`intensive`/`compressed` candidate for large local datasets. It is enabled by setting both `LAPLACE_BSC_COMPRESS_COMMAND` and `LAPLACE_BSC_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`.
+
+### CMIX: Effective via Neural Context Mixing (Size-Gated)
+
+CMIX is the strongest known open-source lossless compression program. It combines a large number of independent context models — including neural networks, match models, indirect context models, and PPM — using a neural-network mixer to predict the probability of each bit. This approach can dramatically outperform dictionary compressors on highly redundant data, but at extreme cost in CPU time and memory (often several gigabytes of RAM and hours to days of wall time).
+
+Because of this extreme cost, CMIX is only practical when the resulting space savings justify the time investment. In Laplace, CMIX is automatically enabled as the top candidate only when two conditions are met:
+
+1. The total input size is **≥ 20 GB**.
+2. The compression mode is `intensive`, `compressed`, or `extreme`.
+
+For inputs below 20 GB, the existing compressor selection logic applies unchanged.
+
+Laplace fit: `CMIX` is an optional size-gated candidate for very large archives in ratio-focused modes. It is enabled by setting both `LAPLACE_CMIX_COMPRESS_COMMAND` and `LAPLACE_CMIX_DECOMPRESS_COMMAND`; each command must read `{input}` and write `{output}`. When CMIX is not configured, the engine silently falls back to the next best candidate.

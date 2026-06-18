@@ -87,8 +87,9 @@ Built-in or optional methods:
 - `BLOSC2`
 - `ZPAQ`
 - `BSC`
+- `CMIX`
 
-`BLOSC2` is built in. `ZPAQ` and `BSC` are only registered when the required command templates are configured in the environment.
+`BLOSC2` is built in. `ZPAQ`, `BSC`, and `CMIX` are only registered when the required command templates are configured in the environment. `CMIX` is additionally size-gated: it is only offered as a candidate when total input size is ≥ 20 GB and the mode is `intensive`, `compressed`, or `extreme`.
 
 ### Format Routing
 

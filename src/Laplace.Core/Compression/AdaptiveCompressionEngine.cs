@@ -4,6 +4,7 @@ namespace Laplace.Core.Compression;
 
 public sealed class AdaptiveCompressionEngine
 {
+    private const long CmixSizeThresholdBytes = 20L * 1024 * 1024 * 1024;
     public CompressionAnalysis Analyze(string path, ReadOnlySpan<byte> sampledBytes)
     {
         var extension = Path.GetExtension(path);
@@ -39,12 +40,21 @@ public sealed class AdaptiveCompressionEngine
 
     public IReadOnlyList<CompressionMethod> GetCandidates(CompressionMode mode, CompressionAnalysis analysis)
     {
+        return GetCandidates(mode, analysis, totalInputSizeBytes: null);
+    }
+
+    public IReadOnlyList<CompressionMethod> GetCandidates(CompressionMode mode, CompressionAnalysis analysis, long? totalInputSizeBytes)
+    {
         if (analysis.LikelyAlreadyCompressed && mode is not (CompressionMode.Intensive or CompressionMode.Compressed or CompressionMode.Extreme))
         {
             return [CompressionMethod.Raw, CompressionMethod.Lz4Fast, CompressionMethod.ZstdFast];
         }
 
-        return mode switch
+        var useCmix = totalInputSizeBytes is not null
+            && totalInputSizeBytes.Value >= CmixSizeThresholdBytes
+            && mode is CompressionMode.Intensive or CompressionMode.Compressed or CompressionMode.Extreme;
+
+        var baseCandidates = mode switch
         {
             CompressionMode.Fast => [CompressionMethod.Blosc2, CompressionMethod.Lz4Fast, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Raw],
             CompressionMode.Balanced => [CompressionMethod.ZstdBalanced, CompressionMethod.Blosc2, CompressionMethod.ZstdFast, CompressionMethod.DeflateFallback, CompressionMethod.Lz4Fast, CompressionMethod.Raw],
@@ -55,6 +65,15 @@ public sealed class AdaptiveCompressionEngine
             CompressionMode.Auto => GetAutoCandidates(analysis),
             _ => [CompressionMethod.ZstdBalanced, CompressionMethod.Raw]
         };
+
+        if (!useCmix)
+        {
+            return baseCandidates;
+        }
+
+        var withCmix = new List<CompressionMethod>(baseCandidates.Count + 1) { CompressionMethod.Cmix };
+        withCmix.AddRange(baseCandidates);
+        return withCmix;
     }
 
     public double Score(
@@ -226,6 +245,7 @@ public sealed class AdaptiveCompressionEngine
             (CompressionMethod.Raw, FileTypeCategory.Image or FileTypeCategory.Video or FileTypeCategory.Audio or FileTypeCategory.Archive or FileTypeCategory.Executable) => 0.95,
             (CompressionMethod.Blosc2, FileTypeCategory.Binary or FileTypeCategory.Database) => 0.92,
             (CompressionMethod.Zpaq, FileTypeCategory.Database or FileTypeCategory.TextLike or FileTypeCategory.SourceCode or FileTypeCategory.Log or FileTypeCategory.Archive) => 0.93,
+            (CompressionMethod.Cmix, FileTypeCategory.Database or FileTypeCategory.TextLike or FileTypeCategory.SourceCode or FileTypeCategory.Log or FileTypeCategory.Binary) => 0.95,
             (CompressionMethod.Bsc, FileTypeCategory.Binary or FileTypeCategory.Database or FileTypeCategory.TextLike or FileTypeCategory.SourceCode) => 0.90,
             (CompressionMethod.Lz4Fast, FileTypeCategory.Binary or FileTypeCategory.Executable) => 0.85,
             (CompressionMethod.DeflateFallback, FileTypeCategory.TextLike or FileTypeCategory.SourceCode or FileTypeCategory.Log) => 0.75,

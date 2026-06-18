@@ -298,6 +298,63 @@ public sealed class ArchiveRoundTripTests
             precision: 6);
     }
 
+    [Fact]
+    public void Cmix_OfferedAsCandidate_WhenTotalInputSizeExceedsThresholdAndRatioMode()
+    {
+        var engine = new AdaptiveCompressionEngine();
+        var analysis = new CompressionAnalysis
+        {
+            FileTypeCategory = FileTypeCategory.Binary,
+            Entropy = 7.9,
+            LikelyAlreadyCompressed = true
+        };
+
+        const long twentyGb = 20L * 1024 * 1024 * 1024;
+        
+        var candidatesIntensive = engine.GetCandidates(CompressionMode.Intensive, analysis, twentyGb);
+        Assert.Equal(CompressionMethod.Cmix, candidatesIntensive[0]);
+
+        var candidatesCompressed = engine.GetCandidates(CompressionMode.Compressed, analysis, twentyGb);
+        Assert.Equal(CompressionMethod.Cmix, candidatesCompressed[0]);
+
+        var candidatesExtreme = engine.GetCandidates(CompressionMode.Extreme, analysis, twentyGb);
+        Assert.Equal(CompressionMethod.Cmix, candidatesExtreme[0]);
+    }
+
+    [Fact]
+    public void Cmix_NotOfferedAsCandidate_WhenTotalInputSizeBelowThreshold()
+    {
+        var engine = new AdaptiveCompressionEngine();
+        var analysis = new CompressionAnalysis
+        {
+            FileTypeCategory = FileTypeCategory.Binary,
+            Entropy = 7.9,
+            LikelyAlreadyCompressed = true
+        };
+
+        const long lessThanTwentyGb = 20L * 1024 * 1024 * 1024 - 1;
+        
+        var candidates = engine.GetCandidates(CompressionMode.Intensive, analysis, lessThanTwentyGb);
+        Assert.DoesNotContain(CompressionMethod.Cmix, candidates);
+    }
+
+    [Fact]
+    public void Cmix_NotOfferedAsCandidate_WhenModeIsNotRatioMode()
+    {
+        var engine = new AdaptiveCompressionEngine();
+        var analysis = new CompressionAnalysis
+        {
+            FileTypeCategory = FileTypeCategory.Binary,
+            Entropy = 7.9,
+            LikelyAlreadyCompressed = true
+        };
+
+        const long twentyGb = 20L * 1024 * 1024 * 1024;
+        
+        var candidates = engine.GetCandidates(CompressionMode.Maximum, analysis, twentyGb);
+        Assert.DoesNotContain(CompressionMethod.Cmix, candidates);
+    }
+
     [Theory]
     [InlineData(1024, 256, 128, 15, 27, true)]
     [InlineData(512, 128, 64, 9, 26, false)]

@@ -11,5 +11,6 @@ public enum CompressionMethod : byte
     DeflateFallback = 6,
     Blosc2 = 7,
     Zpaq = 8,
-    Bsc = 9
+    Bsc = 9,
+    Cmix = 10
 }

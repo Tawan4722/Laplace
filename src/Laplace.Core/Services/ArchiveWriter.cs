@@ -146,6 +146,7 @@ public sealed class ArchiveWriter
             var blockEntries = new List<BlockEntryRecord>();
             var directoryIds = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             var totalBytes = sorted.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
+            options.TotalInputSizeBytes = totalBytes;
 
             await using var archiveStream = new FileStream(
                 outputArchivePath,
@@ -774,7 +775,7 @@ public sealed class ArchiveWriter
 
         var bestMethod = CompressionMethod.Raw;
         var bestScore = double.MinValue;
-        foreach (var candidate in _adaptiveCompressionEngine.GetCandidates(mode, analysis).Distinct())
+        foreach (var candidate in _adaptiveCompressionEngine.GetCandidates(mode, analysis, options.TotalInputSizeBytes).Distinct())
         {
             if (candidate == CompressionMethod.Raw)
             {
@@ -856,6 +857,7 @@ public sealed class ArchiveWriter
             CompressionMethod.Blosc2 => 0.88,
             CompressionMethod.Zpaq => 0.05,
             CompressionMethod.Bsc => 0.35,
+            CompressionMethod.Cmix => 0.02,
             _ => 0.50
         };
     }
@@ -874,6 +876,7 @@ public sealed class ArchiveWriter
             CompressionMethod.Blosc2 => 0.30,
             CompressionMethod.Zpaq => 0.85,
             CompressionMethod.Bsc => 0.78,
+            CompressionMethod.Cmix => 0.95,
             _ => 0.40
         };
     }

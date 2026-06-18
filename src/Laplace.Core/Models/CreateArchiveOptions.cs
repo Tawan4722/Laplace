@@ -39,4 +39,5 @@ public sealed class CreateArchiveOptions
     internal int? ZstdWindowLog { get; set; }
     internal bool ZstdLongDistanceMatching { get; set; }
     internal bool ZstdForceLongDistanceTrial { get; set; }
+    internal long? TotalInputSizeBytes { get; set; }
 }
