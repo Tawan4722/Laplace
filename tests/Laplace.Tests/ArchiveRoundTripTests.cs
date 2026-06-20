@@ -1732,5 +1732,90 @@ public sealed class ArchiveRoundTripTests
         var extractedFile2 = Path.Combine(extractPath2, "large.bin");
         Assert.Equal(randomBytes, await File.ReadAllBytesAsync(extractedFile2));
     }
+
+    [Fact]
+    public void MultiVolumeStream_ReadInWriteMode_DoesNotCrash()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var basePath = Path.Combine(root, "write_test.lpc");
+            using var stream = new MultiVolumeStream(basePath, 1024 * 1024);
+            
+            var data = new byte[100];
+            Random.Shared.NextBytes(data);
+            stream.Write(data);
+            
+            stream.Position = 0;
+            
+            var buffer = new byte[50];
+            int read = stream.Read(buffer, 0, buffer.Length);
+            
+            Assert.Equal(50, read);
+            Assert.Equal(data.AsSpan(0, 50).ToArray(), buffer);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MultiVolumeStream_SequenceGap_ThrowsEarly()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var basePath = Path.Combine(root, "gap.lpc");
+            var vol1 = basePath + ".001";
+            var vol2 = basePath + ".002";
+            var vol3 = basePath + ".003";
+
+            File.WriteAllText(vol1, "volume 1");
+            File.WriteAllText(vol3, "volume 3");
+
+            var ex = Assert.Throws<FileNotFoundException>(() => new MultiVolumeStream(vol1));
+            Assert.Contains("Volume sequence gap detected", ex.Message);
+            Assert.Contains("Volume 2 is missing", ex.Message);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MultiVolumeStream_PositionSeekOptimization_Works()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var basePath = Path.Combine(root, "opt.lpc");
+            using (var stream = new MultiVolumeStream(basePath, 10))
+            {
+                var data = Encoding.UTF8.GetBytes("abcdefghijklmnopqrstuvwxyz");
+                stream.Write(data);
+            }
+
+            var vol1 = basePath + ".001";
+            var vol2 = basePath + ".002";
+            var vol3 = basePath + ".003";
+            Assert.True(File.Exists(vol1));
+            Assert.True(File.Exists(vol2));
+            Assert.True(File.Exists(vol3));
+
+            using (var stream = new MultiVolumeStream(vol1))
+            {
+                var buffer = new byte[26];
+                int read = stream.Read(buffer, 0, buffer.Length);
+                Assert.Equal(26, read);
+                Assert.Equal("abcdefghijklmnopqrstuvwxyz", Encoding.UTF8.GetString(buffer));
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
 

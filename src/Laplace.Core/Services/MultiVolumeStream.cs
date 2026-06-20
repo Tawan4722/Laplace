@@ -41,6 +41,14 @@ public sealed class MultiVolumeStream : Stream
             }
             else
             {
+                // Check if any subsequent volume exists to detect a gap in the split archive
+                for (int gapIdx = idx + 1; gapIdx <= idx + 5; gapIdx++)
+                {
+                    if (File.Exists(GetVolumePath(_basePath, gapIdx)))
+                    {
+                        throw new FileNotFoundException($"Volume sequence gap detected: Volume {idx} is missing but subsequent volumes exist.");
+                    }
+                }
                 break;
             }
         }
@@ -252,18 +260,35 @@ public sealed class MultiVolumeStream : Stream
         while (totalBytesRead < count && _position < _length)
         {
             GetVolumeIndexAndOffset(_position, out int volumeIndex, out long volumeOffset);
-            long volLength = _volumeLengths[volumeIndex];
-            long remainingInVolume = volLength - volumeOffset;
+            
+            long remainingInVolume;
+            if (_volumeLimit != null)
+            {
+                remainingInVolume = _volumeLimit.Value - volumeOffset;
+            }
+            else
+            {
+                remainingInVolume = _volumeLengths[volumeIndex] - volumeOffset;
+            }
 
             if (remainingInVolume <= 0)
             {
-                if (volumeIndex + 1 >= _volumePaths.Count)
+                if (_volumeLimit != null)
                 {
-                    break;
+                    volumeIndex++;
+                    volumeOffset = 0;
+                    remainingInVolume = _volumeLimit.Value;
                 }
-                volumeIndex++;
-                volumeOffset = 0;
-                remainingInVolume = _volumeLengths[volumeIndex];
+                else
+                {
+                    if (volumeIndex + 1 >= _volumePaths.Count)
+                    {
+                        break;
+                    }
+                    volumeIndex++;
+                    volumeOffset = 0;
+                    remainingInVolume = _volumeLengths[volumeIndex];
+                }
             }
 
             int toRead = (int)Math.Min(count - totalBytesRead, remainingInVolume);
@@ -271,7 +296,10 @@ public sealed class MultiVolumeStream : Stream
                 break;
 
             var stream = GetStream(volumeIndex);
-            stream.Position = volumeOffset;
+            if (stream.Position != volumeOffset)
+            {
+                stream.Position = volumeOffset;
+            }
             int read = stream.Read(buffer, offset + totalBytesRead, toRead);
             if (read <= 0)
                 break;
@@ -327,7 +355,10 @@ public sealed class MultiVolumeStream : Stream
                 break;
 
             var stream = GetStream(volumeIndex);
-            stream.Position = volumeOffset;
+            if (stream.Position != volumeOffset)
+            {
+                stream.Position = volumeOffset;
+            }
             int read = await stream.ReadAsync(buffer, offset + totalBytesRead, toRead, cancellationToken).ConfigureAwait(false);
             if (read <= 0)
                 break;
@@ -384,7 +415,10 @@ public sealed class MultiVolumeStream : Stream
                 break;
 
             var stream = GetStream(volumeIndex);
-            stream.Position = volumeOffset;
+            if (stream.Position != volumeOffset)
+            {
+                stream.Position = volumeOffset;
+            }
             int read = await stream.ReadAsync(buffer.Slice(totalBytesRead, toRead), cancellationToken).ConfigureAwait(false);
             if (read <= 0)
                 break;
@@ -436,7 +470,10 @@ public sealed class MultiVolumeStream : Stream
             }
 
             var stream = GetStream(volumeIndex);
-            stream.Position = volumeOffset;
+            if (stream.Position != volumeOffset)
+            {
+                stream.Position = volumeOffset;
+            }
             stream.Write(buffer, offset + bytesWritten, toWrite);
 
             _position += toWrite;
@@ -489,7 +526,10 @@ public sealed class MultiVolumeStream : Stream
             }
 
             var stream = GetStream(volumeIndex);
-            stream.Position = volumeOffset;
+            if (stream.Position != volumeOffset)
+            {
+                stream.Position = volumeOffset;
+            }
             await stream.WriteAsync(buffer.AsMemory(offset + bytesWritten, toWrite), cancellationToken).ConfigureAwait(false);
 
             _position += toWrite;
@@ -543,7 +583,10 @@ public sealed class MultiVolumeStream : Stream
             }
 
             var stream = GetStream(volumeIndex);
-            stream.Position = volumeOffset;
+            if (stream.Position != volumeOffset)
+            {
+                stream.Position = volumeOffset;
+            }
             await stream.WriteAsync(buffer.Slice(bytesWritten, toWrite), cancellationToken).ConfigureAwait(false);
 
             _position += toWrite;
