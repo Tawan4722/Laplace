@@ -191,7 +191,8 @@ public partial class MainWindow : Window
             var progress = new Progress<ArchiveOperationProgress>(p =>
             {
                 var percent = Math.Clamp((int)Math.Round(p.Percent), 0, 100);
-                SetStatus(string.IsNullOrWhiteSpace(p.CurrentItem) ? "Estimating compression..." : p.CurrentItem, percent);
+                var statusText = FormatProgressStatus("Estimating compression...", p);
+                SetStatus(statusText, percent);
             });
 
             var estimate = await _archives.EstimateAsync(paths, new CreateArchiveOptions
@@ -414,6 +415,27 @@ public partial class MainWindow : Window
 
     private async void ApplyStartupArgs(string[] args)
     {
+        if (LpcSfxHelper.IsRunningAsSfx)
+        {
+            Visibility = Visibility.Hidden;
+            Width = 0;
+            Height = 0;
+            WindowStyle = WindowStyle.None;
+            ShowInTaskbar = false;
+
+            var currentProcessPath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(currentProcessPath))
+            {
+                await LoadArchiveAsync(currentProcessPath, null);
+                if (_currentArchivePath is not null)
+                {
+                    await ShowExtractDialogAsync();
+                }
+            }
+            Close();
+            return;
+        }
+
         if (args.Length == 0) return;
 
         var first = args[0];
@@ -638,7 +660,8 @@ public partial class MainWindow : Window
             var progress = new Progress<ArchiveOperationProgress>(p =>
             {
                 var percent = Math.Clamp((int)Math.Round(p.Percent), 0, 100);
-                SetStatus(string.IsNullOrWhiteSpace(p.CurrentItem) ? startedMessage : p.CurrentItem, percent);
+                var statusText = FormatProgressStatus(startedMessage, p);
+                SetStatus(statusText, percent);
             });
 
             await operation(progress, cancellation.Token);
@@ -748,6 +771,21 @@ public partial class MainWindow : Window
             unit++;
         }
         return unit == 0 ? $"{bytes} B" : $"{value:F2} {units[unit]}";
+    }
+
+    private static string FormatProgressStatus(string startedMessage, ArchiveOperationProgress p)
+    {
+        var item = string.IsNullOrWhiteSpace(p.CurrentItem) ? startedMessage : p.CurrentItem;
+        var percent = Math.Clamp((int)Math.Round(p.Percent), 0, 100);
+        
+        if (p.TotalBytes > 0)
+        {
+            var processedStr = FormatBytes(p.ProcessedBytes);
+            var totalStr = FormatBytes(p.TotalBytes);
+            return $"{item} ({percent}% - {processedStr} / {totalStr})";
+        }
+        
+        return $"{item} ({percent}%)";
     }
 
     private static string FormatSummary(string archivePath, ArchiveSummary info)

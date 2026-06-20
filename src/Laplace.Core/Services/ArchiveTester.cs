@@ -61,13 +61,7 @@ public sealed class ArchiveTester
 
         try
         {
-            await using var archiveStream = new FileStream(
-                archivePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                1 << 20,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var archiveStream = LpcSfxHelper.OpenArchiveStream(archivePath);
 
             if (archive.Header.IsSolid)
             {
@@ -148,7 +142,7 @@ public sealed class ArchiveTester
 
     private async Task<TestArchiveResult> TestSolidAsync(
         ArchiveDocument archive,
-        FileStream archiveStream,
+        Stream archiveStream,
         long totalBytes,
         byte[] encryptionKey,
         IProgress<ArchiveOperationProgress>? progress,
@@ -260,7 +254,7 @@ public sealed class ArchiveTester
 
     private async Task<BlockReadResult> ReadBlockAsync(
         ArchiveDocument archive,
-        FileStream archiveStream,
+        Stream archiveStream,
         BlockEntryRecord block,
         byte[] encryptionKey,
         CancellationToken cancellationToken)

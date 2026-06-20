@@ -219,9 +219,9 @@ public sealed class ArchiveRoundTripTests
         var estimate = await new UniversalArchiveService(new CompressorRegistry())
             .EstimateAsync([sourceFile], options);
 
-        Assert.Equal(16 * 1024 * 1024, options.BlockSizeBytes);
+        Assert.Equal(32 * 1024 * 1024, options.BlockSizeBytes);
         Assert.Equal(1, options.Threads);
-        Assert.Equal(8 * 1024 * 1024, options.LzmaDictionarySizeBytes);
+        Assert.Equal(32 * 1024 * 1024, options.LzmaDictionarySizeBytes);
         Assert.Contains("long-distance matches", estimate.Notes);
         Assert.True(estimate.EstimatedCompressedSize < estimate.OriginalSize);
     }
@@ -1520,6 +1520,74 @@ public sealed class ArchiveRoundTripTests
             {
                 Skip = "Windows native archive extraction is only available on Windows.";
             }
+        }
+    }
+
+    [Fact]
+    public async Task SfxArchive_RoundTripsAndExtractsCorrectly()
+    {
+        var baseDir = AppContext.BaseDirectory;
+        var dummyGuiPath = Path.Combine(baseDir, "laplace-gui.exe");
+        var dummyGuiBytes = new byte[1024];
+        new Random(42).NextBytes(dummyGuiBytes);
+        await File.WriteAllBytesAsync(dummyGuiPath, dummyGuiBytes);
+
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "source");
+            Directory.CreateDirectory(sourceDir);
+            var file1 = Path.Combine(sourceDir, "test1.txt");
+            var file2 = Path.Combine(sourceDir, "test2.txt");
+            await File.WriteAllTextAsync(file1, "Hello from file 1! Lorem ipsum dolor sit amet.");
+            await File.WriteAllTextAsync(file2, "Hello from file 2! Some more content here.");
+
+            var sfxPath = Path.Combine(root, "archive.exe");
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            var writeOptions = new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                VerifyAfterCompression = true
+            };
+            await service.CompressAsync([sourceDir], sfxPath, writeOptions);
+
+            Assert.True(File.Exists(sfxPath));
+            Assert.True(LpcSfxHelper.IsSfxFile(sfxPath));
+
+            var sfxBytes = await File.ReadAllBytesAsync(sfxPath);
+            Assert.True(sfxBytes.Length > dummyGuiBytes.Length + 16);
+
+            var stubHeader = new byte[dummyGuiBytes.Length];
+            Array.Copy(sfxBytes, 0, stubHeader, 0, dummyGuiBytes.Length);
+            Assert.True(stubHeader.SequenceEqual(dummyGuiBytes));
+
+            var offset = BitConverter.ToInt64(sfxBytes, sfxBytes.Length - 16);
+            Assert.Equal(dummyGuiBytes.Length, offset);
+
+            var signature = System.Text.Encoding.ASCII.GetString(sfxBytes, sfxBytes.Length - 8, 8);
+            Assert.Equal("SFXLPC!!", signature);
+
+            var extractDir = Path.Combine(root, "extracted");
+            var extractOptions = new ExtractArchiveOptions
+            {
+                Overwrite = true,
+                VerifyChecksums = true
+            };
+            await service.ExtractAsync(sfxPath, extractDir, extractOptions);
+
+            var extractedFile1 = Path.Combine(extractDir, "source", "test1.txt");
+            var extractedFile2 = Path.Combine(extractDir, "source", "test2.txt");
+
+            Assert.True(File.Exists(extractedFile1));
+            Assert.True(File.Exists(extractedFile2));
+            Assert.Equal("Hello from file 1! Lorem ipsum dolor sit amet.", await File.ReadAllTextAsync(extractedFile1));
+            Assert.Equal("Hello from file 2! Some more content here.", await File.ReadAllTextAsync(extractedFile2));
+        }
+        finally
+        {
+            try { File.Delete(dummyGuiPath); } catch {}
+            try { Directory.Delete(root, recursive: true); } catch {}
         }
     }
 

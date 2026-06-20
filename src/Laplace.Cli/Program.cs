@@ -234,7 +234,7 @@ internal static class Program
             Console.WriteLine($"Compressing {inputPaths.Length} input path(s) -> '{outputPath}'");
         }
 
-        await archives.CompressAsync(inputPaths, outputPath, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
+        await archives.CompressAsync(inputPaths, outputPath, options, quiet ? null : ProgressToConsole(json)).ConfigureAwait(false);
         stopwatch.Stop();
 
         var outputPaths = ResolveCreatedArchivePaths(outputPath, options);
@@ -332,7 +332,7 @@ internal static class Program
             Console.WriteLine($"Compressing '{inputPath}' -> '{outputPath}'");
         }
 
-        await archives.CompressAsync([inputPath], outputPath, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
+        await archives.CompressAsync([inputPath], outputPath, options, quiet ? null : ProgressToConsole(json)).ConfigureAwait(false);
         stopwatch.Stop();
 
         var outputPaths = ResolveCreatedArchivePaths(outputPath, options);
@@ -483,7 +483,7 @@ internal static class Program
                     SelectedEntryIds = resolvedPassword == password ? selectedEntryIds : await ResolveSelectedEntryIdsAsync(archives, inputArchive, passwordOptions, resolvedPassword, namePatterns).ConfigureAwait(false),
                     Password = resolvedPassword
                 },
-                quiet || json ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
+                quiet ? null : ProgressToConsole(json)).ConfigureAwait(false)).ConfigureAwait(false);
 
         stopwatch.Stop();
         if (json)
@@ -1291,7 +1291,7 @@ internal static class Program
                             VerifyChecksums = true,
                             Password = activePassword
                         },
-                        quiet || json ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
+                        quiet ? null : ProgressToConsole(json)).ConfigureAwait(false)).ConfigureAwait(false);
             }
 
             var inputs = Directory.EnumerateFileSystemEntries(workspace).ToArray();
@@ -1300,7 +1300,7 @@ internal static class Program
                 throw new InvalidOperationException("Merged archive would be empty.");
             }
 
-            await archives.CompressAsync(inputs, outputArchive, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
+            await archives.CompressAsync(inputs, outputArchive, options, quiet ? null : ProgressToConsole(json)).ConfigureAwait(false);
             WriteCommandResult(
                 json,
                 "Archive merge completed.",
@@ -1439,10 +1439,10 @@ internal static class Program
                             SelectedEntryIds = selectedIds,
                             Password = resolvedPassword
                         },
-                        quiet || json ? null : ProgressToConsole()).ConfigureAwait(false)).ConfigureAwait(false);
+                        quiet ? null : ProgressToConsole(json)).ConfigureAwait(false)).ConfigureAwait(false);
 
                 var inputs = Directory.EnumerateFileSystemEntries(workspace).ToArray();
-                await archives.CompressAsync(inputs, outputArchive, options, quiet || json ? null : ProgressToConsole()).ConfigureAwait(false);
+                await archives.CompressAsync(inputs, outputArchive, options, quiet ? null : ProgressToConsole(json)).ConfigureAwait(false);
                 partOutputs.Add(new SplitOutputPart(outputArchive, part.Count, part.Sum(x => x.OriginalSize)));
             }
             finally
@@ -2382,12 +2382,33 @@ internal static class Program
         Console.WriteLine("  laplace integrate install|uninstall|status [--cli-path <path-to-laplace.exe>]");
     }
 
-    private static IProgress<ArchiveOperationProgress> ProgressToConsole()
+    private static IProgress<ArchiveOperationProgress> ProgressToConsole(bool json)
     {
-        return new Progress<ArchiveOperationProgress>(p =>
+        if (json)
         {
-            Console.Write($"\r{p.Percent,6:F2}%  {p.CurrentItem}                                 ");
-        });
+            return new Progress<ArchiveOperationProgress>(p =>
+            {
+                var dict = new Dictionary<string, object>
+                {
+                    { "progress", new Dictionary<string, object>
+                        {
+                            { "currentItem", p.CurrentItem },
+                            { "processedBytes", p.ProcessedBytes },
+                            { "totalBytes", p.TotalBytes },
+                            { "percent", Math.Round(p.Percent, 2) }
+                        }
+                    }
+                };
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(dict));
+            });
+        }
+        else
+        {
+            return new Progress<ArchiveOperationProgress>(p =>
+            {
+                Console.Write($"\r{p.Percent,6:F2}%  {p.CurrentItem}                                 ");
+            });
+        }
     }
 
     private static void PrintSizeStats(long originalBytes, long compressedBytes, TimeSpan elapsed)

@@ -8,7 +8,7 @@ public sealed class ArchiveReader
 {
     public ArchiveDocument Read(string archivePath, PasswordContext? password = null)
     {
-        using var stream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var stream = LpcSfxHelper.OpenArchiveStream(archivePath);
         var header = ArchiveFormatCodec.ReadHeader(stream);
         ArchiveValidator.ValidateHeader(header, stream.Length);
 
@@ -92,7 +92,7 @@ public sealed class ArchiveReader
 
     public ArchiveHeader ReadHeaderOnly(string archivePath)
     {
-        using var stream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var stream = LpcSfxHelper.OpenArchiveStream(archivePath);
         var header = ArchiveFormatCodec.ReadHeader(stream);
         ArchiveValidator.ValidateHeader(header, stream.Length);
         return header;

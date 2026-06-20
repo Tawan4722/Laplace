@@ -148,8 +148,13 @@ public sealed class ArchiveWriter
             var totalBytes = sorted.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
             options.TotalInputSizeBytes = totalBytes;
 
+            var isSfx = outputArchivePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+            var targetPath = isSfx
+                ? Path.Combine(Path.GetTempPath(), $"laplace_sfx_{Guid.NewGuid():N}.tmp")
+                : outputArchivePath;
+
             await using var archiveStream = new FileStream(
-                outputArchivePath,
+                targetPath,
                 FileMode.Create,
                 FileAccess.ReadWrite,
                 FileShare.None,
@@ -227,6 +232,45 @@ public sealed class ArchiveWriter
                     cancellationToken).ConfigureAwait(false);
             }
             await archiveStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await archiveStream.DisposeAsync().ConfigureAwait(false);
+
+            if (isSfx)
+            {
+                var stubPath = LpcSfxHelper.GetSfxStubPath();
+                if (!File.Exists(stubPath))
+                {
+                    throw new FileNotFoundException($"Laplace GUI executable stub not found at '{stubPath}'. SFX archive cannot be created.");
+                }
+
+                using (var outputStream = new FileStream(outputArchivePath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    using (var stubStream = new FileStream(stubPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    {
+                        await stubStream.CopyToAsync(outputStream, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    long stubLength = outputStream.Position;
+
+                    using (var tempStream = new FileStream(targetPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    {
+                        await tempStream.CopyToAsync(outputStream, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    var offsetBytes = BitConverter.GetBytes(stubLength);
+                    var signatureBytes = System.Text.Encoding.ASCII.GetBytes(LpcSfxHelper.SfxSignature);
+
+                    await outputStream.WriteAsync(offsetBytes, cancellationToken).ConfigureAwait(false);
+                    await outputStream.WriteAsync(signatureBytes, cancellationToken).ConfigureAwait(false);
+                }
+
+                try
+                {
+                    File.Delete(targetPath);
+                }
+                catch
+                {
+                }
+            }
 
             return new ArchiveDocument
             {

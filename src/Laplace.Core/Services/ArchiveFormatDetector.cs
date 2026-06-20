@@ -16,7 +16,7 @@ public static class ArchiveFormatDetector
 {
     public static SupportedArchiveKind DetectReadKind(string archivePath)
     {
-        if (LooksLikeLpc(archivePath))
+        if (LooksLikeLpc(archivePath) || LpcSfxHelper.IsSfxFile(archivePath))
         {
             return SupportedArchiveKind.Lpc;
         }
@@ -50,7 +50,9 @@ public static class ArchiveFormatDetector
     public static SupportedArchiveKind DetectWriteKind(string outputArchivePath)
     {
         var extension = Path.GetExtension(outputArchivePath);
-        if (string.IsNullOrEmpty(extension) || extension.Equals(".lpc", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(extension) || 
+            extension.Equals(".lpc", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".exe", StringComparison.OrdinalIgnoreCase))
         {
             return SupportedArchiveKind.Lpc;
         }

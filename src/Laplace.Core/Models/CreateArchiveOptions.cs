@@ -32,7 +32,7 @@ public sealed class CreateArchiveOptions
     public bool EncryptMetadata { get; set; }
     public long? VolumeSizeBytes { get; set; }
     public int RecoveryPercent { get; set; }
-    internal long? AvailableCompressionMemoryBytes { get; set; }
+    public long? AvailableCompressionMemoryBytes { get; set; }
     internal int? LzmaDictionarySizeBytes { get; set; }
     internal int LzmaFastBytes { get; set; } = 128;
     internal int ZstdLevel { get; set; } = 15;

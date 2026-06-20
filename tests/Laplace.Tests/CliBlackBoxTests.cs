@@ -221,7 +221,7 @@ public sealed class CliBlackBoxTests
 
             var list = await RunLaplaceAsync("list", archivePath, "--json");
             AssertSuccess(list);
-            using (var document = JsonDocument.Parse(list.StandardOutput))
+            using (var document = ParseJsonOutput(list.StandardOutput))
             {
                 Assert.Equal("list", document.RootElement.GetProperty("command").GetString());
                 Assert.Contains(document.RootElement.GetProperty("entries").EnumerateArray(), entry =>
@@ -230,7 +230,7 @@ public sealed class CliBlackBoxTests
 
             var info = await RunLaplaceAsync("info", archivePath, "--json");
             AssertSuccess(info);
-            using (var document = JsonDocument.Parse(info.StandardOutput))
+            using (var document = ParseJsonOutput(info.StandardOutput))
             {
                 Assert.Equal("info", document.RootElement.GetProperty("command").GetString());
                 Assert.Equal("LPC", document.RootElement.GetProperty("info").GetProperty("format").GetString());
@@ -238,14 +238,14 @@ public sealed class CliBlackBoxTests
 
             var test = await RunLaplaceAsync("test", archivePath, "--json");
             AssertSuccess(test);
-            using (var document = JsonDocument.Parse(test.StandardOutput))
+            using (var document = ParseJsonOutput(test.StandardOutput))
             {
                 Assert.True(document.RootElement.GetProperty("result").GetProperty("success").GetBoolean());
             }
 
             var find = await RunLaplaceAsync("find", archivePath, "--name", "*.txt", "--text", "needle", "--json");
             AssertSuccess(find);
-            using (var document = JsonDocument.Parse(find.StandardOutput))
+            using (var document = ParseJsonOutput(find.StandardOutput))
             {
                 Assert.Equal("find", document.RootElement.GetProperty("command").GetString());
                 Assert.Contains(document.RootElement.GetProperty("results").EnumerateArray(), entry =>
@@ -275,7 +275,7 @@ public sealed class CliBlackBoxTests
             var dryCompress = await RunLaplaceAsync("compress", sourceFile, dryArchivePath, "--dry-run", "--json");
             AssertSuccess(dryCompress);
             Assert.False(File.Exists(dryArchivePath));
-            using (var document = JsonDocument.Parse(dryCompress.StandardOutput))
+            using (var document = ParseJsonOutput(dryCompress.StandardOutput))
             {
                 Assert.True(document.RootElement.GetProperty("dryRun").GetBoolean());
                 Assert.Equal(dryArchivePath, document.RootElement.GetProperty("outputPath").GetString());
@@ -285,7 +285,7 @@ public sealed class CliBlackBoxTests
 
             var dryDelete = await RunLaplaceAsync("delete", archivePath, "delete-me.txt", "--dry-run", "--json");
             AssertSuccess(dryDelete);
-            using (var document = JsonDocument.Parse(dryDelete.StandardOutput))
+            using (var document = ParseJsonOutput(dryDelete.StandardOutput))
             {
                 Assert.Equal("delete", document.RootElement.GetProperty("command").GetString());
                 Assert.True(document.RootElement.GetProperty("dryRun").GetBoolean());
@@ -328,7 +328,7 @@ public sealed class CliBlackBoxTests
 
             var delete = await RunLaplaceAsync("delete", archivePath, "--from-file", deleteTargets, "--json");
             AssertSuccess(delete);
-            using (var document = JsonDocument.Parse(delete.StandardOutput))
+            using (var document = ParseJsonOutput(delete.StandardOutput))
             {
                 Assert.Equal("delete", document.RootElement.GetProperty("command").GetString());
                 Assert.Contains(document.RootElement.GetProperty("operands").EnumerateArray(), operand =>
@@ -377,7 +377,7 @@ public sealed class CliBlackBoxTests
 
             var diff = await RunLaplaceAsync("diff", leftArchive, rightArchive, "--json");
             AssertSuccess(diff);
-            using (var document = JsonDocument.Parse(diff.StandardOutput))
+            using (var document = ParseJsonOutput(diff.StandardOutput))
             {
                 var changes = document.RootElement.GetProperty("changes").EnumerateArray().ToArray();
                 Assert.Contains(changes, change =>
@@ -429,7 +429,7 @@ public sealed class CliBlackBoxTests
 
             var split = await RunLaplaceAsync("split", archivePath, outputPrefix, "--count", "1", "--no-verify", "--json");
             AssertSuccess(split);
-            using (var document = JsonDocument.Parse(split.StandardOutput))
+            using (var document = ParseJsonOutput(split.StandardOutput))
             {
                 Assert.Equal(3, document.RootElement.GetProperty("partCount").GetInt32());
             }
@@ -443,7 +443,7 @@ public sealed class CliBlackBoxTests
 
             var list = await RunLaplaceAsync("list", part1, "--json");
             AssertSuccess(list);
-            using (var document = JsonDocument.Parse(list.StandardOutput))
+            using (var document = ParseJsonOutput(list.StandardOutput))
             {
                 Assert.Single(document.RootElement.GetProperty("entries").EnumerateArray(), entry =>
                     !entry.GetProperty("isDirectory").GetBoolean());
@@ -633,10 +633,8 @@ public sealed class CliBlackBoxTests
             CreateNoWindow = true
         };
 
-        startInfo.ArgumentList.Add("run");
-        startInfo.ArgumentList.Add("--project");
-        startInfo.ArgumentList.Add(Path.Combine(repoRoot, "src", "Laplace.Cli", "Laplace.Cli.csproj"));
-        startInfo.ArgumentList.Add("--");
+        var dllPath = Path.Combine(repoRoot, "src", "Laplace.Cli", "bin", "Debug", "net8.0-windows", "laplace.dll");
+        startInfo.ArgumentList.Add(dllPath);
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
@@ -673,6 +671,20 @@ public sealed class CliBlackBoxTests
         Assert.True(
             result.ExitCode == 0,
             $"Expected exit code 0, got {result.ExitCode}.{Environment.NewLine}STDOUT:{Environment.NewLine}{result.StandardOutput}{Environment.NewLine}STDERR:{Environment.NewLine}{result.StandardError}");
+    }
+
+    private static JsonDocument ParseJsonOutput(string stdout)
+    {
+        var lines = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        for (int i = lines.Length - 1; i >= 0; i--)
+        {
+            var trimmed = lines[i].Trim();
+            if (trimmed.StartsWith("{") && !trimmed.Contains("\"progress\""))
+            {
+                return JsonDocument.Parse(trimmed);
+            }
+        }
+        throw new InvalidOperationException($"No valid non-progress JSON object found in output. Full stdout:\n{stdout}");
     }
 
     private static string FindRepoRoot()

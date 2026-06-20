@@ -50,13 +50,7 @@ public sealed class ArchiveExtractor
         try
         {
             Directory.CreateDirectory(destinationFolder);
-            await using var archiveStream = new FileStream(
-                archivePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                1 << 20,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using var archiveStream = LpcSfxHelper.OpenArchiveStream(archivePath);
 
             if (archive.Header.IsSolid)
             {
@@ -154,7 +148,7 @@ public sealed class ArchiveExtractor
 
     private async Task ExtractSolidAsync(
         ArchiveDocument archive,
-        FileStream archiveStream,
+        Stream archiveStream,
         string destinationFolder,
         ExtractArchiveOptions options,
         IReadOnlySet<long>? selectedIds,
@@ -268,7 +262,7 @@ public sealed class ArchiveExtractor
 
     private async Task<byte[]> ReadBlockAsync(
         ArchiveDocument archive,
-        FileStream archiveStream,
+        Stream archiveStream,
         BlockEntryRecord block,
         byte[] encryptionKey,
         CancellationToken cancellationToken)

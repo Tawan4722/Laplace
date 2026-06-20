@@ -54,6 +54,7 @@ public sealed class ZstdCompressor : IBlockCompressor
     {
         using var input = new MemoryStream(data.ToArray(), writable: false);
         using var zstd = new DecompressionStream(input);
+        zstd.SetParameter(ZSTD_dParameter.ZSTD_d_windowLogMax, 31);
         using var output = expectedDecompressedSize > 0
             ? new MemoryStream(expectedDecompressedSize)
             : new MemoryStream();
