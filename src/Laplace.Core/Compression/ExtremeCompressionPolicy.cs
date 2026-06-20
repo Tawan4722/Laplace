@@ -29,17 +29,17 @@ internal static class ExtremeCompressionPolicy
 
         if (availableMemory >= OneGiB)
         {
-            return new ExtremeCompressionSettings(OneGiB, 256 * 1024 * 1024, 128 * 1024 * 1024, 15, 27, true, 1);
+            return new ExtremeCompressionSettings(OneGiB, 256 * 1024 * 1024, 256 * 1024 * 1024, 22, 31, true, 1);
         }
 
         if (availableMemory >= FiveHundredTwelveMiB)
         {
-            return new ExtremeCompressionSettings(FiveHundredTwelveMiB, 128 * 1024 * 1024, 64 * 1024 * 1024, 9, 26, false, 1);
+            return new ExtremeCompressionSettings(FiveHundredTwelveMiB, 128 * 1024 * 1024, 128 * 1024 * 1024, 19, 27, true, 1);
         }
 
         if (availableMemory >= TwoHundredFiftySixMiB)
         {
-            return new ExtremeCompressionSettings(TwoHundredFiftySixMiB, 16 * 1024 * 1024, 8 * 1024 * 1024, 1, 23, false, 1);
+            return new ExtremeCompressionSettings(TwoHundredFiftySixMiB, 32 * 1024 * 1024, 32 * 1024 * 1024, 9, 25, false, 1);
         }
 
         throw new InvalidOperationException("Extreme mode requires at least 256 MiB of available compression memory.");

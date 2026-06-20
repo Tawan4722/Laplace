@@ -356,9 +356,9 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Theory]
-    [InlineData(1024, 256, 128, 15, 27, true)]
-    [InlineData(512, 128, 64, 9, 26, false)]
-    [InlineData(256, 16, 8, 1, 23, false)]
+    [InlineData(1024, 256, 256, 22, 31, true)]
+    [InlineData(512, 128, 128, 19, 27, true)]
+    [InlineData(256, 32, 32, 9, 25, false)]
     public void ExtremePolicy_SelectsMemoryTierAndSingleWorker(
         int availableMiB,
         int blockMiB,
