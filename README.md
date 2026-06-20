@@ -9,6 +9,7 @@ Laplace is a Windows-first archive manager with a native `.lpc` format, a comman
 ## Highlights
 
 - Native block-based `.lpc` archives with adaptive compression.
+- **Self-Extracting Archives (SFX)**: Package `.lpc` archives as standalone `.exe` files that extract themselves on click without needing Laplace pre-installed.
 - AES-256-GCM payload and metadata encryption.
 - Argon2id password derivation for new encrypted LPC archives.
 - Solid archives, recovery records, integrity testing, and repair.
@@ -41,6 +42,7 @@ The release also provides:
 The desktop app supports:
 
 - creating LPC, ZIP, 7z, and RAR archives
+- creating Windows executable Self-Extracting LPC archives (`.exe`)
 - compression estimates
 - opening and listing archive contents
 - extracting complete archives or selected entries
@@ -54,7 +56,7 @@ The desktop app supports:
 
 Long-running work uses a centered progress screen with the current item, percentage when available, and cancellation. Encrypted archives use a dedicated password dialog with archive context, password visibility control, Caps Lock feedback, validation, and retry after an incorrect password.
 
-Opening an `.lpc` file from Explorer launches the desktop app when integration is enabled.
+Opening an `.lpc` or LPC-formatted `.exe` (SFX) file from Explorer launches the desktop app when integration is enabled.
 
 ## Supported Formats
 
@@ -63,13 +65,14 @@ Opening an `.lpc` file from Explorer launches the desktop app when integration i
 | Format | Support |
 | --- | --- |
 | `.lpc` | Native |
+| `.exe` | Self-Extracting native LPC executable |
 | `.zip` | Built in, including AES-256 encryption |
 | `.7z` | Built in for standard paths; installed 7-Zip is used for advanced or multi-volume output |
 | `.rar` | Requires installed `rar.exe` or `WinRAR.exe` |
 
 ### Read, List, Test, and Extract
 
-- `.lpc`
+- `.lpc` & `.exe` (Self-Extracting LPC)
 - `.zip`
 - `.7z`
 - `.rar`
@@ -174,13 +177,16 @@ Common workflows:
 # Create an LPC archive
 laplace compress .\input .\backup.lpc --mode balanced --verify
 
+# Create a self-extracting archive (SFX)
+laplace compress .\input .\sfx-backup.exe --mode balanced --verify
+
 # Create an encrypted archive with hidden metadata
 laplace compress .\input .\private.lpc --encrypt --hide-names --verify
 
 # Maximum practical LPC ratio
 laplace compress .\input .\archive.lpc --mode extreme --verify
 
-# Inspect and test
+# Inspect and test (supports native .lpc and .exe SFX files)
 laplace list .\archive.lpc
 laplace info .\archive.lpc
 laplace test .\archive.lpc
@@ -200,8 +206,6 @@ laplace diff .\before.lpc .\after.lpc
 laplace repair .\damaged.lpc
 ```
 
-Other commands include `estimate`, `comment`, `lock`, `view`, `merge`, `split`, `benchmark`, `open`, `extract-here`, `extract-to-folder`, `extract-dialog`, `iso-to-drive-dialog`, and `integrate`.
-
 ### Password Inputs
 
 - `--password <value>`
@@ -215,12 +219,155 @@ Non-interactive runs must provide explicit password or keyfile input.
 
 Major reporting and workflow commands support:
 
-- `--json`
+- `--json`: Enables machine-readable output. On progress-reporting commands, it stream JSON lines updating real-time bytes, percentage, and current item.
 - `--dry-run`
 - `--from-file`
 - `--quiet`
 
 See [CLI exit codes](docs/CLI_EXIT_CODES.md) and [shell completions](docs/COMPLETIONS.md).
+
+## CLI Command & Function Reference
+
+Laplace provides a powerful, comprehensive set of CLI commands. Below is the detailed syntax and behavior for each of the available functions:
+
+### 1. `compress`
+Create an LPC, ZIP, 7z, or RAR archive from the specified input paths.
+*   **Syntax**: `laplace compress <input_path...> [output_archive] [options]`
+*   **Key Options**:
+    *   `--mode <fast|balanced|maximum|intensive|compressed|extreme|auto>`: Compression policy.
+    *   `--block-size <size>`: Explicit block size (e.g. `8M`, `16M`).
+    *   `--solid <on|off|auto>`: Configure solid mode.
+    *   `--threads <count>`: Number of worker threads.
+    *   `--volume-size <size>`: Partition output into volumes.
+    *   `--hide-names`: Encrypt entry metadata/names.
+    *   `--recovery-percent <N>`: Append Reed-Solomon recovery record percent.
+    *   `--verify` / `--no-verify`: Enable/disable immediate check after writing.
+    *   `--encrypt` / `--password <value>` / `--password-file <path>` / `--keyfile <path>`: Security parameters.
+
+### 2. `compress-beside`
+Compress a single file or directory and output the archive immediately beside it.
+*   **Syntax**: `laplace compress-beside <input_path> [options]`
+*   **Key Options**: Accepts same compression and security options as `compress`.
+
+### 3. `estimate`
+Analyze input paths and sample data to estimate compression size, ratio, and recommended policies without writing an archive.
+*   **Syntax**: `laplace estimate <input_path...> [options]`
+*   **Key Options**: `--mode`, `--block-size`, `--solid`, `--threads`, `--json`.
+
+### 4. `extract`
+Extract all or matching contents of an archive to a destination folder.
+*   **Syntax**: `laplace extract <input_archive> <output_folder> [options]`
+*   **Key Options**:
+    *   `--name <glob>`: Match entry paths to extract only selected files.
+    *   `--overwrite`: Replace existing files.
+    *   `--verify` / `--no-verify`: Validate hashes/CRC before writing.
+    *   `--password` / `--password-file` / `--keyfile`: Access credentials.
+
+### 5. `list`
+Print the file entries, directory structure, sizes, and attributes of an archive.
+*   **Syntax**: `laplace list <input_archive> [options]`
+*   **Key Options**: `--json`, `--password`, `--password-file`, `--keyfile`.
+
+### 6. `info`
+Print the technical header details, format version, flags, block counts, and encryption profiles of an archive.
+*   **Syntax**: `laplace info <input_archive> [options]`
+*   **Key Options**: `--json`, `--password`, `--password-file`, `--keyfile`.
+
+### 7. `test`
+Run full integrity validation checks on all block CRC checksums and file SHA-256 hashes inside an archive.
+*   **Syntax**: `laplace test <input_archive> [options]`
+*   **Key Options**: `--json`, `--password`, `--password-file`, `--keyfile`.
+
+### 8. `add`
+Append new files or directories to an existing LPC archive.
+*   **Syntax**: `laplace add <archive> <input_path...> [options]`
+*   **Key Options**: `--from-file`, `--mode`, `--json`, `--dry-run`, security options.
+
+### 9. `freshen`
+Update files in an existing LPC archive only if their modification dates are newer than the archived copies.
+*   **Syntax**: `laplace freshen <archive> <input_path...> [options]`
+*   **Key Options**: `--from-file`, `--json`, `--dry-run`, security options.
+
+### 10. `delete`
+Remove specified file entries or patterns from an LPC archive.
+*   **Syntax**: `laplace delete <archive> <entry_path_or_id_or_glob...> [options]`
+*   **Key Options**: `--from-file`, `--json`, `--dry-run`, security options.
+
+### 11. `rename`
+Rename a file or folder entry within an LPC archive.
+*   **Syntax**: `laplace rename <archive.lpc> <entry_path_or_id> <new_entry_path> [options]`
+*   **Key Options**: `--json`, `--dry-run`, security options.
+
+### 12. `comment`
+Show, set, append, or clear user comment metadata embedded in an LPC archive.
+*   **Syntax**: `laplace comment <archive> <--show |--set <text> |--file <path> |--clear> [options]`
+*   **Key Options**: `--json`, `--dry-run`, security options.
+
+### 13. `lock`
+Lock an LPC archive to permanently freeze its state and prevent any subsequent add, delete, or rename modifications.
+*   **Syntax**: `laplace lock <archive> [options]`
+*   **Key Options**: `--json`, `--dry-run`, security options.
+
+### 14. `find`
+Search for file entries inside an LPC archive filtering by name glob and/or matching string content.
+*   **Syntax**: `laplace find <archive> [--name <glob>] [--text <value>] [options]`
+*   **Key Options**: `--json`, security options.
+
+### 15. `diff`
+Analyze two archives and list all additions, removals, and modifications between them.
+*   **Syntax**: `laplace diff <archive_a> <archive_b> [options]`
+*   **Key Options**: `--json`, security options.
+
+### 16. `merge`
+Consolidate multiple input archives into a single, unified output archive.
+*   **Syntax**: `laplace merge <output_archive> <input_archive...> [options]`
+*   **Key Options**: `--from-file`, `--mode`, `--json`, `--dry-run`, security options.
+
+### 17. `split`
+Split an archive into smaller sequentially-named part volumes based on maximum size or target count.
+*   **Syntax**: `laplace split <archive> <output_prefix> <--size <val> |--count <N>> [options]`
+*   **Key Options**: `--mode`, `--json`, `--dry-run`, security options.
+
+### 18. `view`
+Extract and print the binary or text content of a specific archive entry to stdout.
+*   **Syntax**: `laplace view <archive.lpc> <entry_path_or_id> [options]`
+*   **Key Options**: `--password`, `--password-file`, `--keyfile`.
+
+### 19. `repair`
+Repair corrupted LPC archives using built-in Reed-Solomon recovery records, or trigger RAR recovery routines.
+*   **Syntax**: `laplace repair <archive.lpc|archive.rar>`
+
+### 20. `benchmark`
+Run standardized compression and decompression benchmarks using active encoders to test speed and ratio on local hardware.
+*   **Syntax**: `laplace benchmark <input_path> [--json]`
+
+### 21. `open`
+Launch the desktop GUI window and open the specified archive.
+*   **Syntax**: `laplace open <archive.lpc>`
+
+### 22. `extract-here`
+Extract all archive entries to the current working directory.
+*   **Syntax**: `laplace extract-here <archive> [options]`
+
+### 23. `extract-to-folder`
+Extract archive contents directly to the specified path without opening selection prompts.
+*   **Syntax**: `laplace extract-to-folder <archive> <output_folder> [options]`
+
+### 24. `extract-to-named-folder`
+Extract archive contents to a subdirectory named after the archive.
+*   **Syntax**: `laplace extract-to-named-folder <archive> [options]`
+
+### 25. `extract-dialog`
+Launch the desktop GUI extract dialog directly for the specified archive.
+*   **Syntax**: `laplace extract-dialog <archive>`
+
+### 26. `iso-to-drive-dialog`
+Open the ISO-to-drive dialog in the desktop GUI to parse and dump an ISO image to a target drive.
+*   **Syntax**: `laplace iso-to-drive-dialog <image.iso>`
+
+### 27. `integrate`
+Install, check status of, or uninstall the shell context menu integration and file registrations for the current user.
+*   **Syntax**: `laplace integrate <install|uninstall|status> [--cli-path <path>]`
 
 ## Explorer Integration
 
@@ -353,7 +500,6 @@ tests/        Unit, round-trip, safety, and CLI black-box tests
 ## Current Limitations
 
 - Native LPC multi-volume output is not implemented.
-- LPC self-extracting archives are not implemented.
 - RAR creation requires WinRAR or RAR command-line tools.
 - Advanced 7z and multi-volume 7z output require installed 7-Zip tools.
 - Optional ZPAQ and BSC methods require configured external commands.
