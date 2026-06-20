@@ -8,7 +8,8 @@ public static class ArchiveVolumePathHelper
         var directory = Path.GetDirectoryName(fullOutputPath) ?? Directory.GetCurrentDirectory();
         var extension = Path.GetExtension(fullOutputPath);
 
-        if (extension.Equals(".7z", StringComparison.OrdinalIgnoreCase))
+        if (extension.Equals(".7z", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".lpc", StringComparison.OrdinalIgnoreCase))
         {
             var fileName = Path.GetFileName(fullOutputPath);
             return Directory.EnumerateFiles(directory, $"{fileName}.*")

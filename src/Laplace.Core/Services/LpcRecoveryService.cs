@@ -35,7 +35,7 @@ public sealed class LpcRecoveryService
     }
 
     public static async Task WriteRecordAsync(
-        FileStream archiveStream,
+        Stream archiveStream,
         long protectedLength,
         int recoveryPercent,
         CancellationToken cancellationToken = default)
@@ -128,61 +128,98 @@ public sealed class LpcRecoveryService
     public async Task<int> RepairAsync(string archivePath, CancellationToken cancellationToken = default)
     {
         var fullPath = Path.GetFullPath(archivePath);
-        if (!File.Exists(fullPath))
+        var resolvedPath = fullPath;
+        if (!File.Exists(resolvedPath))
         {
-            throw new FileNotFoundException("Archive not found.", fullPath);
+            if (MultiVolumeStream.IsMultiVolumeFirstFile(fullPath, out var firstVol))
+            {
+                resolvedPath = firstVol;
+            }
+            else
+            {
+                throw new FileNotFoundException("Archive not found.", fullPath);
+            }
         }
 
-        var directory = Path.GetDirectoryName(fullPath)!;
-        var tempPath = Path.Combine(directory, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.repair");
-        var backupPath = Path.Combine(directory, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.bak");
-        File.Copy(fullPath, tempPath, overwrite: false);
+        var volPaths = MultiVolumeStream.GetVolumePaths(resolvedPath);
+        var directory = Path.GetDirectoryName(resolvedPath)!;
+        var tempBase = Path.Combine(directory, $".{Path.GetFileName(resolvedPath)}.{Guid.NewGuid():N}.repair");
+        var backupBase = Path.Combine(directory, $".{Path.GetFileName(resolvedPath)}.{Guid.NewGuid():N}.bak");
+
+        var tempVolPaths = new List<string>();
+        var backupVolPaths = new List<string>();
+
+        for (int i = 0; i < volPaths.Count; i++)
+        {
+            var originalVol = volPaths[i];
+            var tempVol = MultiVolumeStream.GetVolumePath(tempBase, i + 1);
+            var backupVol = MultiVolumeStream.GetVolumePath(backupBase, i + 1);
+
+            File.Copy(originalVol, tempVol, overwrite: false);
+            tempVolPaths.Add(tempVol);
+            backupVolPaths.Add(backupVol);
+        }
+
         try
         {
             int repairedShards;
-            await using (var stream = new FileStream(
-                             tempPath,
-                             FileMode.Open,
-                             FileAccess.ReadWrite,
-                             FileShare.None,
-                             1 << 20,
-                             FileOptions.Asynchronous | FileOptions.RandomAccess))
+            await using (var stream = new MultiVolumeStream(tempVolPaths, isWrite: true))
             {
                 repairedShards = await RepairStreamAsync(stream, repair: true, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            File.Move(fullPath, backupPath);
-            File.Move(tempPath, fullPath);
-            File.Delete(backupPath);
+            // Rename originals to backups, then temps to originals
+            for (int i = 0; i < volPaths.Count; i++)
+            {
+                File.Move(volPaths[i], backupVolPaths[i]);
+                File.Move(tempVolPaths[i], volPaths[i]);
+            }
+
+            // Delete backups
+            for (int i = 0; i < volPaths.Count; i++)
+            {
+                File.Delete(backupVolPaths[i]);
+            }
+
             return repairedShards;
         }
         catch
         {
-            if (File.Exists(backupPath) && !File.Exists(fullPath))
+            // Restore from backups if they exist
+            for (int i = 0; i < volPaths.Count; i++)
             {
-                File.Move(backupPath, fullPath);
+                if (File.Exists(backupVolPaths[i]) && !File.Exists(volPaths[i]))
+                {
+                    File.Move(backupVolPaths[i], volPaths[i]);
+                }
             }
             throw;
         }
         finally
         {
-            if (File.Exists(tempPath))
+            // Clean up temp files
+            for (int i = 0; i < tempVolPaths.Count; i++)
             {
-                File.Delete(tempPath);
+                if (File.Exists(tempVolPaths[i]))
+                {
+                    File.Delete(tempVolPaths[i]);
+                }
+            }
+            // Clean up backup files
+            for (int i = 0; i < backupVolPaths.Count; i++)
+            {
+                if (File.Exists(backupVolPaths[i]))
+                {
+                    File.Delete(backupVolPaths[i]);
+                }
             }
         }
     }
 
     public async Task ValidateRecordAsync(string archivePath, CancellationToken cancellationToken = default)
     {
-        await using var stream = new FileStream(
-            archivePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            1 << 20,
-            FileOptions.Asynchronous | FileOptions.RandomAccess);
+        await using var stream = LpcSfxHelper.OpenArchiveStream(archivePath);
         var repairedShards = await RepairStreamAsync(stream, repair: false, cancellationToken).ConfigureAwait(false);
         if (repairedShards != 0)
         {
@@ -191,7 +228,7 @@ public sealed class LpcRecoveryService
     }
 
     private static async Task<int> RepairStreamAsync(
-        FileStream stream,
+        Stream stream,
         bool repair,
         CancellationToken cancellationToken)
     {
@@ -331,7 +368,7 @@ public sealed class LpcRecoveryService
     }
 
     private static async Task<(long RecordOffset, long RecordLength)> ReadTrailerAsync(
-        FileStream stream,
+        Stream stream,
         CancellationToken cancellationToken)
     {
         if (stream.Length < TrailerSize)

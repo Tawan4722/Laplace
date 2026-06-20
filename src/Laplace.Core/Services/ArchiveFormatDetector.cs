@@ -16,27 +16,43 @@ public static class ArchiveFormatDetector
 {
     public static SupportedArchiveKind DetectReadKind(string archivePath)
     {
-        if (LooksLikeLpc(archivePath) || LpcSfxHelper.IsSfxFile(archivePath))
+        var resolvedPath = archivePath;
+        if (!File.Exists(resolvedPath))
+        {
+            if (MultiVolumeStream.IsMultiVolumeFirstFile(archivePath, out var firstVolPath))
+            {
+                resolvedPath = firstVolPath;
+            }
+        }
+
+        if (LooksLikeLpc(resolvedPath) || LpcSfxHelper.IsSfxFile(resolvedPath))
         {
             return SupportedArchiveKind.Lpc;
         }
 
-        if (LooksLikeZip(archivePath))
+        if (LooksLikeZip(resolvedPath))
         {
             return SupportedArchiveKind.Zip;
         }
 
-        if (LooksLikeSevenZip(archivePath))
+        if (LooksLikeSevenZip(resolvedPath))
         {
             return SupportedArchiveKind.SevenZip;
         }
 
-        if (LooksLikeRar(archivePath))
+        if (LooksLikeRar(resolvedPath))
         {
             return SupportedArchiveKind.Rar;
         }
 
-        return Path.GetExtension(archivePath).ToLowerInvariant() switch
+        var ext = Path.GetExtension(archivePath).ToLowerInvariant();
+        if (System.Text.RegularExpressions.Regex.IsMatch(ext, @"^\.\d{3}$"))
+        {
+            var withoutVolExt = Path.GetFileNameWithoutExtension(archivePath);
+            ext = Path.GetExtension(withoutVolExt).ToLowerInvariant();
+        }
+
+        return ext switch
         {
             ".lpc" => SupportedArchiveKind.Lpc,
             ".zip" => SupportedArchiveKind.Zip,
@@ -125,12 +141,27 @@ public static class ArchiveFormatDetector
 
     private static bool TryReadMagic(string archivePath, Span<byte> magic)
     {
-        if (!File.Exists(archivePath))
+        var resolvedPath = archivePath;
+        if (!File.Exists(resolvedPath))
+        {
+            if (MultiVolumeStream.IsMultiVolumeFirstFile(archivePath, out var firstVolPath))
+            {
+                resolvedPath = firstVolPath;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        try
+        {
+            using var stream = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return stream.Read(magic) == magic.Length;
+        }
+        catch
         {
             return false;
         }
-
-        using var stream = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return stream.Read(magic) == magic.Length;
     }
 }

@@ -55,9 +55,14 @@ public sealed class ArchiveWriter
             throw new ArgumentOutOfRangeException(nameof(options.BlockSizeBytes), "Block size must be positive.");
         }
 
+        var isSfx = outputArchivePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
         if (options.VolumeSizeBytes is not null)
         {
-            throw new NotSupportedException("LPC multi-volume output is reserved but is not implemented yet.");
+            if (isSfx)
+            {
+                throw new NotSupportedException("Multi-volume output is not supported for SFX archives.");
+            }
+            ArchiveVolumePathHelper.DeleteExistingVolumes(outputArchivePath);
         }
 
         if (options.Threads < 1)
@@ -148,18 +153,20 @@ public sealed class ArchiveWriter
             var totalBytes = sorted.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
             options.TotalInputSizeBytes = totalBytes;
 
-            var isSfx = outputArchivePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+            isSfx = outputArchivePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
             var targetPath = isSfx
                 ? Path.Combine(Path.GetTempPath(), $"laplace_sfx_{Guid.NewGuid():N}.tmp")
                 : outputArchivePath;
 
-            await using var archiveStream = new FileStream(
-                targetPath,
-                FileMode.Create,
-                FileAccess.ReadWrite,
-                FileShare.None,
-                1 << 20,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            await using Stream archiveStream = options.VolumeSizeBytes is { } volumeSize
+                ? new MultiVolumeStream(targetPath, volumeSize)
+                : new FileStream(
+                    targetPath,
+                    FileMode.Create,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    1 << 20,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
             header.DataSectionOffset = ArchiveFormatCodec.WriteHeader(archiveStream, header);
 
             if (useSolid)
@@ -293,7 +300,7 @@ public sealed class ArchiveWriter
         CreateArchiveOptions options,
         ArchiveHeader header,
         byte[] encryptionKey,
-        FileStream archiveStream,
+        Stream archiveStream,
         List<FileEntryRecord> fileEntries,
         List<BlockEntryRecord> blockEntries,
         Dictionary<string, long> directoryIds,
@@ -397,7 +404,7 @@ public sealed class ArchiveWriter
         CreateArchiveOptions options,
         ArchiveHeader header,
         byte[] encryptionKey,
-        FileStream archiveStream,
+        Stream archiveStream,
         List<FileEntryRecord> fileEntries,
         List<BlockEntryRecord> blockEntries,
         Dictionary<string, long> directoryIds,
@@ -585,7 +592,7 @@ public sealed class ArchiveWriter
         PreparedSolidBlock prepared,
         ArchiveHeader header,
         byte[] encryptionKey,
-        FileStream archiveStream,
+        Stream archiveStream,
         List<BlockEntryRecord> blockEntries,
         CancellationToken cancellationToken)
     {

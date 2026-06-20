@@ -546,7 +546,7 @@ public sealed class CliBlackBoxTests
     }
 
     [Fact]
-    public async Task Compress_LpcVolumeSize_ReturnsClearUnsupportedFailure()
+    public async Task Compress_LpcVolumeSize_Succeeds()
     {
         var root = CreateTempFolder();
         try
@@ -557,9 +557,8 @@ public sealed class CliBlackBoxTests
 
             var result = await RunLaplaceAsync("compress", sourceFile, archivePath, "--volume-size", "1M", "--no-verify");
 
-            Assert.Equal(2, result.ExitCode);
-            Assert.Contains("LPC multi-volume output is reserved", result.StandardError);
-            Assert.False(File.Exists(archivePath));
+            Assert.True(result.ExitCode == 0, $"ExitCode: {result.ExitCode}\nStdout: {result.StandardOutput}\nStderr: {result.StandardError}");
+            Assert.True(File.Exists(archivePath + ".001"));
         }
         finally
         {

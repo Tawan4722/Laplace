@@ -81,6 +81,11 @@ public static class LpcSfxHelper
 
     public static Stream OpenArchiveStream(string path)
     {
+        if (MultiVolumeStream.IsMultiVolumeFirstFile(path, out string firstVolPath))
+        {
+            return new MultiVolumeStream(firstVolPath);
+        }
+
         var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         try
         {

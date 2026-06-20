@@ -1653,4 +1653,84 @@ public sealed class ArchiveRoundTripTests
             }
         }
     }
+
+    [Fact]
+    public async Task NativeLpc_MultiVolume_RoundTrip_Verify_Repair()
+    {
+        var root = CreateTempFolder();
+        var sourceFile = Path.Combine(root, "large.bin");
+        // Create 2.5MB random (uncompressible) file
+        var randomBytes = new byte[2500000];
+        Random.Shared.NextBytes(randomBytes);
+        await File.WriteAllBytesAsync(sourceFile, randomBytes);
+
+        var archivePath = Path.Combine(root, "multi.lpc");
+        var extractPath = Path.Combine(root, "out");
+
+        var registry = new CompressorRegistry();
+        var writer = new ArchiveWriter(registry);
+        
+        // 1. Create multi-volume archive (1 MB volumes)
+        await writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Balanced,
+            BlockSizeBytes = 256 * 1024,
+            VolumeSizeBytes = 1024 * 1024,
+            RecoveryPercent = 10, // 10% recovery record
+            VerifyAfterCompression = false
+        });
+
+        // Verify volume files exist
+        var vol1 = archivePath + ".001";
+        var vol2 = archivePath + ".002";
+        Assert.True(File.Exists(vol1), "Volume 1 should exist");
+        Assert.True(File.Exists(vol2), "Volume 2 should exist");
+
+        // 2. List entries using Volume 1 path
+        var reader = new ArchiveReader();
+        var entries = reader.ListEntries(vol1);
+        Assert.Single(entries);
+        Assert.Equal("large.bin", entries[0].RelativePath);
+
+        // 3. Extract and verify content
+        var extractor = new ArchiveExtractor(registry);
+        await extractor.ExtractAsync(vol1, extractPath, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            VerifyChecksums = true
+        });
+
+        var extractedFile = Path.Combine(extractPath, "large.bin");
+        Assert.True(File.Exists(extractedFile));
+        Assert.Equal(randomBytes, await File.ReadAllBytesAsync(extractedFile));
+
+        // 4. Validate recovery record passes
+        var recoveryService = new LpcRecoveryService();
+        await recoveryService.ValidateRecordAsync(vol1);
+
+        // 5. Corrupt volume 2 and verify validation detects it
+        var vol2Bytes = await File.ReadAllBytesAsync(vol2);
+        // Find a spot inside the middle of volume 2 to corrupt (avoid headers/trailers)
+        vol2Bytes[500000] ^= 0xFF;
+        await File.WriteAllBytesAsync(vol2, vol2Bytes);
+
+        // Validation should fail
+        await Assert.ThrowsAsync<LaplaceArchiveException>(() => recoveryService.ValidateRecordAsync(vol1));
+
+        // 6. Repair the archive and verify validation passes and extraction is successful
+        var repairedCount = await recoveryService.RepairAsync(vol1);
+        Assert.True(repairedCount > 0, "Should have repaired at least one stripe/shard");
+
+        await recoveryService.ValidateRecordAsync(vol1);
+
+        var extractPath2 = Path.Combine(root, "out2");
+        await extractor.ExtractAsync(vol1, extractPath2, new ExtractArchiveOptions
+        {
+            Overwrite = true,
+            VerifyChecksums = true
+        });
+        var extractedFile2 = Path.Combine(extractPath2, "large.bin");
+        Assert.Equal(randomBytes, await File.ReadAllBytesAsync(extractedFile2));
+    }
 }
+
