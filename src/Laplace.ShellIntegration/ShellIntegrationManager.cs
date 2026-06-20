@@ -131,16 +131,16 @@ public sealed class ShellIntegrationManager
         ConfigureCascadeRoot(menuKey, quotedGui);
 
         RegisterCascadeVerb(menuKey, "open", "Open in Laplace", $"{quotedGui} --open \"%1\"");
-        RegisterCascadeVerb(menuKey, "extract_options", "Extract with options...", $"{quotedCli} extract-dialog \"%1\"");
-        RegisterCascadeVerb(menuKey, "extract_here", "Extract here", $"{quotedCli} extract-here \"%1\"");
-        RegisterCascadeVerb(menuKey, "extract_named", "Extract to archive-named folder", $"{quotedCli} extract-to-named-folder \"%1\"");
-        RegisterCascadeVerb(menuKey, "test_archive", "Test integrity", $"{quotedCli} test \"%1\"");
-        RegisterCascadeVerb(menuKey, "find_archive", "Find in archive", $"{quotedCli} find \"%1\"");
-        RegisterCascadeVerb(menuKey, "repair_archive", "Repair archive", $"{quotedCli} repair \"%1\"");
-        RegisterCascadeVerb(menuKey, "archive_info", "Show archive details", $"{quotedCli} info \"%1\"");
+        RegisterCascadeVerb(menuKey, "extract_options", "Extract with options...", $"{quotedGui} --extract \"%1\"");
+        RegisterCascadeVerb(menuKey, "extract_here", "Extract here", $"{quotedGui} --extract-here \"%1\"");
+        RegisterCascadeVerb(menuKey, "extract_named", "Extract to archive-named folder", $"{quotedGui} --extract-to-named-folder \"%1\"");
+        RegisterCascadeVerb(menuKey, "test_archive", "Test integrity", $"{quotedGui} --test \"%1\"");
+        RegisterCascadeVerb(menuKey, "find_archive", "Find in archive", $"{quotedGui} --open \"%1\"");
+        RegisterCascadeVerb(menuKey, "repair_archive", "Repair archive", $"{quotedGui} --repair \"%1\"");
+        RegisterCascadeVerb(menuKey, "archive_info", "Show archive details", $"{quotedGui} --info \"%1\"");
         if (includeIsoDriveVerb)
         {
-            RegisterCascadeVerb(menuKey, "iso_to_drive", "Extract ISO to removable drive...", $"{quotedCli} iso-to-drive-dialog \"%1\"");
+            RegisterCascadeVerb(menuKey, "iso_to_drive", "Extract ISO to removable drive...", $"{quotedGui} --iso-to-drive \"%1\"");
         }
     }
 
@@ -171,9 +171,9 @@ public sealed class ShellIntegrationManager
         [
             new("estimate", "Estimate archive size", $"{quotedGui} --estimate \"{targetPlaceholder}\""),
             new("create_options", "Create archive...", $"{quotedGui} --add \"{targetPlaceholder}\""),
-            new("create_quick", "Create .lpc beside item", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced"),
-            new("create_quick_verified", "Create verified .lpc", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode balanced --verify"),
-            new("create_ultra_ratio", "Ultra Ratio", $"{quotedCli} compress-beside \"{targetPlaceholder}\" --mode extreme --verify")
+            new("create_quick", "Create .lpc beside item", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced"),
+            new("create_quick_verified", "Create verified .lpc", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced --verify"),
+            new("create_ultra_ratio", "Ultra Ratio", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode extreme --verify")
         ];
     }
 

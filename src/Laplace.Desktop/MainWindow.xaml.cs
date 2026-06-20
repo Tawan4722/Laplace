@@ -441,6 +441,181 @@ public partial class MainWindow : Window
             await ShowEstimateAsync(args.Skip(1));
             return;
         }
+        if (string.Equals(first, "--extract-here", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            var archivePath = Path.GetFullPath(args[1]);
+            var targetDir = Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory();
+            await LoadArchiveAsync(archivePath, null);
+            if (_currentArchivePath is not null)
+            {
+                var options = new ExtractArchiveOptions
+                {
+                    Overwrite = false,
+                    VerifyChecksums = true,
+                    Password = _currentPassword
+                };
+                var completed = await RunOperationAsync(
+                    "Extracting archive...",
+                    (progress, cancellationToken) => _archives.ExtractAsync(_currentArchivePath, targetDir, options, progress, cancellationToken),
+                    $"Extracted to {targetDir}.");
+                if (completed)
+                {
+                    Close();
+                }
+            }
+            else
+            {
+                Close();
+            }
+            return;
+        }
+        if (string.Equals(first, "--extract-to-named-folder", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            var archivePath = Path.GetFullPath(args[1]);
+            var folder = Path.Combine(Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(archivePath));
+            await LoadArchiveAsync(archivePath, null);
+            if (_currentArchivePath is not null)
+            {
+                var options = new ExtractArchiveOptions
+                {
+                    Overwrite = false,
+                    VerifyChecksums = true,
+                    Password = _currentPassword
+                };
+                var completed = await RunOperationAsync(
+                    "Extracting archive...",
+                    (progress, cancellationToken) => _archives.ExtractAsync(_currentArchivePath, folder, options, progress, cancellationToken),
+                    $"Extracted to {folder}.");
+                if (completed)
+                {
+                    Close();
+                }
+            }
+            else
+            {
+                Close();
+            }
+            return;
+        }
+        if (string.Equals(first, "--test", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            var archivePath = Path.GetFullPath(args[1]);
+            await LoadArchiveAsync(archivePath, null);
+            if (_currentArchivePath is not null)
+            {
+                await RunOperationAsync(
+                    "Testing archive...",
+                    async (_, cancellationToken) =>
+                    {
+                        var result = await _archives.TestAsync(_currentArchivePath, _currentPassword, cancellationToken);
+                        if (!result.Success)
+                        {
+                            throw new InvalidOperationException(result.Message);
+                        }
+                    },
+                    "Archive integrity OK.");
+            }
+            Close();
+            return;
+        }
+        if (string.Equals(first, "--info", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            var archivePath = Path.GetFullPath(args[1]);
+            await LoadArchiveAsync(archivePath, null);
+            if (_currentSummary is not null && _currentArchivePath is not null)
+            {
+                MessageBox.Show(this, FormatSummary(_currentArchivePath, _currentSummary), "Archive information", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            Close();
+            return;
+        }
+        if (string.Equals(first, "--repair", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            var archivePath = Path.GetFullPath(args[1]);
+            if (File.Exists(archivePath))
+            {
+                var completed = await RunOperationAsync(
+                    "Repairing archive...",
+                    async (_, cancellationToken) =>
+                    {
+                        if (ArchiveFormatDetector.DetectReadKind(archivePath) == SupportedArchiveKind.Rar)
+                        {
+                            var rarTools = new RarToolCommandService();
+                            await rarTools.RepairAsync(archivePath, cancellationToken);
+                        }
+                        else
+                        {
+                            var recovery = new LpcRecoveryService();
+                            await recovery.RepairAsync(archivePath, cancellationToken);
+                        }
+                    },
+                    "Repair operation completed.");
+                if (completed)
+                {
+                    if (ArchiveFormatDetector.DetectReadKind(archivePath) == SupportedArchiveKind.Rar)
+                    {
+                        MessageBox.Show(this, "RAR repair completed.", "Repair archive", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        MessageBox.Show(this, "LPC repair completed. Archive has been repaired.", "Repair archive", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                }
+            }
+            Close();
+            return;
+        }
+        if (string.Equals(first, "--compress-beside", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
+        {
+            var inputPath = Path.GetFullPath(args[1]);
+            var mode = CompressionMode.Balanced;
+            var verify = false;
+            for (var i = 2; i < args.Length; i++)
+            {
+                if (args[i].Equals("--mode", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    var modeStr = args[++i];
+                    mode = modeStr.ToLowerInvariant() switch
+                    {
+                        "fast" => CompressionMode.Fast,
+                        "balanced" => CompressionMode.Balanced,
+                        "maximum" => CompressionMode.Maximum,
+                        "intensive" => CompressionMode.Intensive,
+                        "compressed" or "ultra" => CompressionMode.Compressed,
+                        "extreme" => CompressionMode.Extreme,
+                        "auto" => CompressionMode.Auto,
+                        _ => CompressionMode.Balanced
+                    };
+                }
+                else if (args[i].Equals("--verify", StringComparison.OrdinalIgnoreCase))
+                {
+                    verify = true;
+                }
+            }
+            var outputPath = ArchivePathHelper.ResolveBesideArchivePath(inputPath);
+            var options = new CreateArchiveOptions
+            {
+                Mode = mode,
+                VerifyAfterCompression = verify
+            };
+            if (mode == CompressionMode.Extreme)
+            {
+                options.AvailableCompressionMemoryBytes = 256L * 1024 * 1024;
+            }
+            var completed = await RunOperationAsync(
+                "Creating archive...",
+                (progress, cancellationToken) => _archives.CompressAsync([inputPath], outputPath, options, progress, cancellationToken),
+                $"Created {Path.GetFileName(outputPath)}.");
+            if (completed)
+            {
+                Close();
+            }
+            else
+            {
+                Close();
+            }
+            return;
+        }
         if (string.Equals(first, "--open", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
         {
             first = args[1];

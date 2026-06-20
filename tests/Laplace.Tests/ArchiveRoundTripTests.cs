@@ -455,7 +455,7 @@ public sealed class ArchiveRoundTripTests
         var ultra = Assert.Single(verbs, verb => verb.Title == "Ultra Ratio");
 
         Assert.Equal("create_ultra_ratio", ultra.Name);
-        Assert.Equal($"\"laplace.exe\" compress-beside \"{targetPlaceholder}\" --mode extreme --verify", ultra.Command);
+        Assert.Equal($"\"laplace-gui.exe\" --compress-beside \"{targetPlaceholder}\" --mode extreme --verify", ultra.Command);
     }
 
     [Fact]

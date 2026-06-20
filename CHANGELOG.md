@@ -4,6 +4,16 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 2.1.1 - 2026-06-20
+
+- Redesigned Windows Explorer right-click context menu integration to route all actions directly to the WPF GUI, eliminating flashing CLI windows.
+- Added native WPF GUI startup options for testing, info details, repair operations, extraction (here and named folders), and beside compression.
+
+## 2.1.0 - 2026-06-14
+
+- Migrated the desktop user interface from WinForms to a modern WPF design.
+- Added support for the CMIX compression method, size-gated for LPC archives.
+
 ## 1.10.0 - 2026-06-07
 
 - Tuned LPC `extreme` mode with tiered Zstd long-distance matching, improving large distant-repeat compression while reducing peak memory.
