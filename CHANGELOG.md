@@ -4,6 +4,10 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+- Added native LPC multi-volume archive output (`.lpc.001`, `.lpc.002`, etc.) through `--volume-size` and desktop volume presets.
+- Added multi-volume LPC reading, extraction, integrity testing, recovery validation, and repair.
+- Self-extracting archives (SFX) created as `.exe` files now support all LPC features except multi-volume output.
+
 ## 2.1.1 - 2026-06-20
 
 - Redesigned Windows Explorer right-click context menu integration to route all actions directly to the WPF GUI, eliminating flashing CLI windows.

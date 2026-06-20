@@ -184,10 +184,11 @@ public partial class CreateArchiveDialog : Window
 
         var outputExtension = Path.GetExtension(OutputInput.Text);
         if (!(VolumeSizeCombo.SelectedItem?.ToString() ?? "None").Equals("None", StringComparison.OrdinalIgnoreCase) &&
+            !outputExtension.Equals(".lpc", StringComparison.OrdinalIgnoreCase) &&
             !outputExtension.Equals(".7z", StringComparison.OrdinalIgnoreCase) &&
             !outputExtension.Equals(".rar", StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show(this, "Multi-volume output requires a 7z or RAR archive.", "Laplace", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "Multi-volume output requires an LPC, 7z, or RAR archive.", "Laplace", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 

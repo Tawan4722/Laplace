@@ -51,7 +51,7 @@ The desktop app supports:
 - archive information
 - encrypted archive unlocking and password retry
 - metadata encryption and LPC recovery options
-- multi-volume 7z and RAR presets
+- multi-volume LPC, 7z, and RAR presets
 - ISO extraction to a removable drive without formatting or raw-writing it
 
 Long-running work uses a centered progress screen with the current item, percentage when available, and cancellation. Encrypted archives use a dedicated password dialog with archive context, password visibility control, Caps Lock feedback, validation, and retry after an incorrect password.
@@ -499,7 +499,6 @@ tests/        Unit, round-trip, safety, and CLI black-box tests
 
 ## Current Limitations
 
-- Native LPC multi-volume output is not implemented.
 - RAR creation requires WinRAR or RAR command-line tools.
 - Advanced 7z and multi-volume 7z output require installed 7-Zip tools.
 - Optional ZPAQ and BSC methods require configured external commands.
