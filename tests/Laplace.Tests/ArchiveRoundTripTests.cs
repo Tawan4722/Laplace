@@ -1128,6 +1128,35 @@ public sealed class ArchiveRoundTripTests
     }
 
     [Fact]
+    public async Task CreateIndependent_UsesParallelCompression()
+    {
+        var root = CreateTempFolder();
+        var sourceDir = Path.Combine(root, "parallel_ind");
+        Directory.CreateDirectory(sourceDir);
+        for (var i = 0; i < 12; i++)
+        {
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, $"part-{i:00}.txt"), new string((char)('A' + i), 96 * 1024));
+        }
+
+        var trackingRegistry = new TrackingCompressorRegistry();
+        var archivePath = Path.Combine(root, "parallel_ind.lpc");
+        var archive = await new ArchiveWriter(trackingRegistry).CreateAsync([sourceDir], archivePath, new CreateArchiveOptions
+        {
+            Mode = CompressionMode.Fast,
+            SolidMode = SolidMode.Off,
+            BlockSizeBytes = 64 * 1024,
+            Threads = 4,
+            VerifyAfterCompression = false
+        });
+
+        Assert.True(trackingRegistry.MaximumConcurrentCompression > 1);
+        Assert.Equal(
+            Enumerable.Range(0, archive.BlockEntries.Count).Select(value => (long)value),
+            archive.BlockEntries.Select(block => block.BlockId));
+        Assert.True((await new ArchiveTester(trackingRegistry).TestAsync(archivePath)).Success);
+    }
+
+    [Fact]
     public async Task RecoveryRecord_RepairsCorruptedPayloadShard()
     {
         var root = CreateTempFolder();

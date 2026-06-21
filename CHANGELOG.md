@@ -4,9 +4,15 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 2.2.0 - 2026-06-21
+
 - Added native LPC multi-volume archive output (`.lpc.001`, `.lpc.002`, etc.) through `--volume-size` and desktop volume presets.
 - Added multi-volume LPC reading, extraction, integrity testing, recovery validation, and repair.
 - Self-extracting archives (SFX) created as `.exe` files now support all LPC features except multi-volume output.
+- Implemented memory pooling with `ArrayPool<byte>` in LZMA and Zstandard compressor implementations to eliminate GC pauses.
+- Implemented parallel block decompression and concurrent file extraction for both solid and non-solid archives.
+- Implemented high-speed copy-through mutations (rename, comment, lock) transferring raw payloads directly stream-to-stream.
+- Implemented multi-threaded independent block compression for non-solid archives.
 
 ## 2.1.1 - 2026-06-20
 

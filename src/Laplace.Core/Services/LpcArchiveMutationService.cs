@@ -2,6 +2,8 @@ using Laplace.Core.Abstractions;
 using Laplace.Core.Exceptions;
 using Laplace.Core.Models;
 using Laplace.Core.Security;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
 namespace Laplace.Core.Services;
@@ -117,43 +119,27 @@ public sealed class LpcArchiveMutationService
     {
         var archive = _reader.Read(archivePath, options.Password);
         var oldRelativePath = ResolveSingleTarget(archive, target);
-        return RewriteAsync(
+        return RewriteCopyThroughAsync(
             archivePath,
             options,
-            workspace =>
+            (files, blocks) =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var oldPath = PathSecurity.EnsureSafeExtractionPath(workspace, oldRelativePath);
-                var newPath = PathSecurity.EnsureSafeExtractionPath(workspace, newRelativePath);
-                if (!File.Exists(oldPath) && !Directory.Exists(oldPath))
-                {
-                    throw new FileNotFoundException($"Archive entry not found after extraction: {oldRelativePath}");
-                }
-
-                var parent = Path.GetDirectoryName(newPath);
-                if (!string.IsNullOrWhiteSpace(parent))
-                {
-                    Directory.CreateDirectory(parent);
-                }
-
-                DeletePathIfExists(newPath);
-                if (Directory.Exists(oldPath))
-                {
-                    Directory.Move(oldPath, newPath);
-                }
-                else
-                {
-                    File.Move(oldPath, newPath);
-                }
+                var entry = files.Single(x => string.Equals(x.RelativePath, oldRelativePath, StringComparison.OrdinalIgnoreCase));
+                entry.RelativePath = PathSecurity.NormalizeArchivePath(newRelativePath);
+                return Task.CompletedTask;
             },
-            preserveLock: true,
-            cancellationToken,
-            archive);
+            archive,
+            cancellationToken: cancellationToken);
     }
 
     public Task SetCommentAsync(string archivePath, string comment, MutateArchiveOptions options, CancellationToken cancellationToken = default)
     {
-        return RewriteAsync(archivePath, options, _ => { }, preserveLock: true, cancellationToken, newComment: comment);
+        return RewriteCopyThroughAsync(
+            archivePath,
+            options,
+            (files, blocks) => Task.CompletedTask,
+            newComment: comment,
+            cancellationToken: cancellationToken);
     }
 
     public Task ClearCommentAsync(string archivePath, MutateArchiveOptions options, CancellationToken cancellationToken = default)
@@ -163,7 +149,12 @@ public sealed class LpcArchiveMutationService
 
     public Task LockAsync(string archivePath, MutateArchiveOptions options, CancellationToken cancellationToken = default)
     {
-        return RewriteAsync(archivePath, options, _ => { }, preserveLock: false, cancellationToken, forceLock: true);
+        return RewriteCopyThroughAsync(
+            archivePath,
+            options,
+            (files, blocks) => Task.CompletedTask,
+            forceLock: true,
+            cancellationToken: cancellationToken);
     }
 
     public IReadOnlyList<ArchiveFindResult> Find(string archivePath, ArchiveFindOptions options)
@@ -368,6 +359,228 @@ public sealed class LpcArchiveMutationService
         {
             TryDelete(replacementPath);
             TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    private async Task RewriteCopyThroughAsync(
+        string archivePath,
+        MutateArchiveOptions options,
+        Func<List<FileEntryRecord>, List<BlockEntryRecord>, Task> mutateMetadata,
+        ArchiveDocument? archive = null,
+        string? newComment = null,
+        bool forceLock = false,
+        CancellationToken cancellationToken = default)
+    {
+        archive ??= _reader.Read(archivePath, options.Password);
+        if (archive.Header.IsLocked)
+        {
+            throw new InvalidOperationException("Archive is locked and cannot be mutated.");
+        }
+
+        if (archive.Header.IsEncrypted && options.Password is null)
+        {
+            throw new ArchivePasswordRequiredException(archivePath);
+        }
+
+        var replacementPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(archivePath))!, $".{Path.GetFileName(archivePath)}.{Guid.NewGuid():N}.tmp");
+        var backupPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(archivePath))!, $".{Path.GetFileName(archivePath)}.{Guid.NewGuid():N}.bak");
+
+        var encryptionKey = Array.Empty<byte>();
+        if (archive.Header.IsEncrypted)
+        {
+            encryptionKey = ArchiveEncryption.DeriveKey(options.Password!, archive.Header);
+        }
+
+        try
+        {
+            var newHeader = new ArchiveHeader
+            {
+                FormatVersion = archive.Header.FormatVersion,
+                ArchiveFlags = archive.Header.ArchiveFlags,
+                CreatedUnixMilliseconds = archive.Header.CreatedUnixMilliseconds,
+                CreatorVersion = archive.Header.CreatorVersion,
+                DefaultBlockSize = archive.Header.DefaultBlockSize,
+                EncryptionAlgorithmId = archive.Header.EncryptionAlgorithmId,
+                KeyDerivationAlgorithmId = archive.Header.KeyDerivationAlgorithmId,
+                KeyDerivationIterations = archive.Header.KeyDerivationIterations,
+                KeyDerivationMemoryKiB = archive.Header.KeyDerivationMemoryKiB,
+                KeyDerivationParallelism = archive.Header.KeyDerivationParallelism,
+                EncryptionSalt = archive.Header.EncryptionSalt,
+                Comment = newComment ?? archive.Header.Comment
+            };
+
+            if (forceLock)
+            {
+                newHeader.FormatVersion = Math.Max(newHeader.FormatVersion, (ushort)3);
+                newHeader.ArchiveFlags |= ArchiveHeader.LockedFlag;
+            }
+
+            var newFileEntries = archive.FileEntries.Select(x => new FileEntryRecord
+            {
+                EntryId = x.EntryId,
+                ParentFolderId = x.ParentFolderId,
+                RelativePath = x.RelativePath,
+                OriginalSize = x.OriginalSize,
+                CompressedSize = x.CompressedSize,
+                CreatedUnixMilliseconds = x.CreatedUnixMilliseconds,
+                ModifiedUnixMilliseconds = x.ModifiedUnixMilliseconds,
+                FileAttributes = x.FileAttributes,
+                IsDirectory = x.IsDirectory,
+                IsSymlink = x.IsSymlink,
+                DataStreamOffset = x.DataStreamOffset,
+                FirstBlockIndex = x.FirstBlockIndex,
+                BlockCount = x.BlockCount,
+                CompressionSummary = x.CompressionSummary,
+                ChecksumType = x.ChecksumType,
+                FileChecksum = x.FileChecksum,
+                OptionalMetadataJson = x.OptionalMetadataJson
+            }).ToList();
+
+            var newBlockEntries = archive.BlockEntries.Select(x => new BlockEntryRecord
+            {
+                BlockId = x.BlockId,
+                OwningFileEntryId = x.OwningFileEntryId,
+                OriginalBlockSize = x.OriginalBlockSize,
+                CompressedBlockSize = x.CompressedBlockSize,
+                CompressionMethod = x.CompressionMethod,
+                CompressionLevel = x.CompressionLevel,
+                OriginalStreamOffset = x.OriginalStreamOffset,
+                DataOffset = x.DataOffset,
+                BlockChecksumCrc32C = x.BlockChecksumCrc32C,
+                Flags = x.Flags,
+                IsRaw = x.IsRaw,
+                EncryptionNonce = x.EncryptionNonce,
+                EncryptionTag = x.EncryptionTag
+            }).ToList();
+
+            await mutateMetadata(newFileEntries, newBlockEntries).ConfigureAwait(false);
+
+            newHeader.FileEntryCount = newFileEntries.Count;
+            newHeader.BlockEntryCount = newBlockEntries.Count;
+
+            await using (var outputStream = new FileStream(replacementPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1 << 20, FileOptions.Asynchronous))
+            {
+                await using (var oldStream = LpcSfxHelper.OpenArchiveStream(archivePath))
+                {
+                    newHeader.DataSectionOffset = ArchiveFormatCodec.WriteHeader(outputStream, newHeader);
+
+                    oldStream.Position = archive.Header.DataSectionOffset;
+                    var dataSectionLength = archive.Header.FileTableOffset - archive.Header.DataSectionOffset;
+                    
+                    var buffer = new byte[64 * 1024];
+                    var remaining = dataSectionLength;
+                    while (remaining > 0)
+                    {
+                        var toRead = (int)Math.Min(remaining, buffer.Length);
+                        var read = await oldStream.ReadAsync(buffer.AsMemory(0, toRead), cancellationToken).ConfigureAwait(false);
+                        if (read <= 0) break;
+                        await outputStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                        remaining -= read;
+                    }
+
+                    var offsetDiff = newHeader.DataSectionOffset - archive.Header.DataSectionOffset;
+                    if (offsetDiff != 0)
+                    {
+                        foreach (var block in newBlockEntries)
+                        {
+                            block.DataOffset += offsetDiff;
+                        }
+                    }
+
+                    newHeader.FileTableOffset = outputStream.Position;
+                    if (newHeader.IsMetadataEncrypted)
+                    {
+                        var plaintext = ArchiveFormatCodec.SerializeFileEntries(newFileEntries, newHeader.FormatVersion);
+                        try
+                        {
+                            ArchiveFormatCodec.WriteEncryptedTable(
+                                outputStream,
+                                ArchiveEncryption.EncryptMetadata(plaintext, encryptionKey, "file table", newHeader));
+                        }
+                        finally
+                        {
+                            CryptographicOperations.ZeroMemory(plaintext);
+                        }
+                    }
+                    else
+                    {
+                        ArchiveFormatCodec.WriteFileEntries(outputStream, newFileEntries, newHeader.FormatVersion);
+                    }
+
+                    newHeader.BlockTableOffset = outputStream.Position;
+                    if (newHeader.IsMetadataEncrypted)
+                    {
+                        var plaintext = ArchiveFormatCodec.SerializeBlockEntries(newBlockEntries, newHeader.FormatVersion);
+                        try
+                        {
+                            ArchiveFormatCodec.WriteEncryptedTable(
+                                outputStream,
+                                ArchiveEncryption.EncryptMetadata(plaintext, encryptionKey, "block table", newHeader));
+                        }
+                        finally
+                        {
+                            CryptographicOperations.ZeroMemory(plaintext);
+                        }
+                    }
+                    else
+                    {
+                        ArchiveFormatCodec.WriteBlockEntries(outputStream, newBlockEntries, newHeader.FormatVersion);
+                    }
+
+                    if (newHeader.HasRecoveryRecord)
+                    {
+                        newHeader.RecoveryRecordOffset = outputStream.Position;
+                        newHeader.RecoveryRecordLength = LpcRecoveryService.CalculateRecordLength(
+                            newHeader.RecoveryRecordOffset,
+                            archive.Header.RecoveryPercent);
+                        newHeader.RecoveryPercent = archive.Header.RecoveryPercent;
+                    }
+
+                    outputStream.Position = 0;
+                    ArchiveFormatCodec.WriteHeader(outputStream, newHeader);
+
+                    if (newHeader.HasRecoveryRecord)
+                    {
+                        outputStream.Position = newHeader.RecoveryRecordOffset;
+                        await LpcRecoveryService.WriteRecordAsync(
+                            outputStream,
+                            newHeader.RecoveryRecordOffset,
+                            newHeader.RecoveryPercent,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (options.VerifyAfterRewrite)
+            {
+                var test = await new ArchiveTester(_compressorRegistry, _reader)
+                    .TestAsync(replacementPath, newHeader.IsEncrypted ? options.Password : null, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                if (!test.Success)
+                {
+                    throw new InvalidDataException($"Rewritten archive failed verification: {test.Message}");
+                }
+            }
+
+            File.Move(archivePath, backupPath);
+            File.Move(replacementPath, archivePath);
+            TryDelete(backupPath);
+        }
+        catch
+        {
+            if (File.Exists(backupPath) && !File.Exists(archivePath))
+            {
+                File.Move(backupPath, archivePath);
+            }
+            throw;
+        }
+        finally
+        {
+            TryDelete(replacementPath);
+            if (encryptionKey.Length > 0)
+            {
+                CryptographicOperations.ZeroMemory(encryptionKey);
+            }
         }
     }
 

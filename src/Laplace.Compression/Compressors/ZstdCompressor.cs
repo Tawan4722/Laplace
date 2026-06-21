@@ -32,33 +32,23 @@ public sealed class ZstdCompressor : IBlockCompressor
 
     public byte[] Compress(ReadOnlySpan<byte> data)
     {
-        using var output = new MemoryStream();
-        using (var zstd = new CompressionStream(output, Level))
+        using var compressor = new Compressor(Level);
+        if (_windowLog is { } windowLog)
         {
-            if (_windowLog is { } windowLog)
-            {
-                zstd.SetParameter(ZSTD_cParameter.ZSTD_c_windowLog, windowLog);
-            }
-            if (_enableLongDistanceMatching)
-            {
-                zstd.SetParameter(ZSTD_cParameter.ZSTD_c_enableLongDistanceMatching, 1);
-            }
-
-            zstd.Write(data);
+            compressor.SetParameter(ZSTD_cParameter.ZSTD_c_windowLog, windowLog);
+        }
+        if (_enableLongDistanceMatching)
+        {
+            compressor.SetParameter(ZSTD_cParameter.ZSTD_c_enableLongDistanceMatching, 1);
         }
 
-        return output.ToArray();
+        return compressor.Wrap(data).ToArray();
     }
 
     public byte[] Decompress(ReadOnlySpan<byte> data, int expectedDecompressedSize)
     {
-        using var input = new MemoryStream(data.ToArray(), writable: false);
-        using var zstd = new DecompressionStream(input);
-        zstd.SetParameter(ZSTD_dParameter.ZSTD_d_windowLogMax, 31);
-        using var output = expectedDecompressedSize > 0
-            ? new MemoryStream(expectedDecompressedSize)
-            : new MemoryStream();
-        zstd.CopyTo(output);
-        return output.ToArray();
+        using var decompressor = new Decompressor();
+        decompressor.SetParameter(ZSTD_dParameter.ZSTD_d_windowLogMax, 31);
+        return decompressor.Unwrap(data).ToArray();
     }
 }

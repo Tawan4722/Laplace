@@ -33,8 +33,26 @@ public sealed class LzmaCompressor : IBlockCompressor
         using (var encoder = LzmaStream.Create(_encoderProperties, false, output))
         {
             output.Write(encoder.Properties, 0, encoder.Properties.Length);
-            var bytes = data.ToArray();
-            encoder.Write(bytes, 0, bytes.Length);
+            
+            var pool = System.Buffers.ArrayPool<byte>.Shared;
+            var buffer = pool.Rent(Math.Min(data.Length, 64 * 1024));
+            try
+            {
+                var remaining = data.Length;
+                var offset = 0;
+                while (remaining > 0)
+                {
+                    var chunk = Math.Min(remaining, buffer.Length);
+                    data.Slice(offset, chunk).CopyTo(buffer);
+                    encoder.Write(buffer, 0, chunk);
+                    offset += chunk;
+                    remaining -= chunk;
+                }
+            }
+            finally
+            {
+                pool.Return(buffer);
+            }
         }
 
         return output.ToArray();
@@ -47,14 +65,57 @@ public sealed class LzmaCompressor : IBlockCompressor
             throw new InvalidDataException("LZMA block is missing coder properties.");
         }
 
-        var bytes = data.ToArray();
-        var properties = bytes[..PropertyLengthBytes];
-        using var input = new MemoryStream(bytes, PropertyLengthBytes, bytes.Length - PropertyLengthBytes, writable: false);
-        using var lzma = LzmaStream.Create(properties, input, input.Length, expectedDecompressedSize, leaveOpen: false);
-        using var output = expectedDecompressedSize > 0
-            ? new MemoryStream(expectedDecompressedSize)
-            : new MemoryStream();
-        lzma.CopyTo(output);
-        return output.ToArray();
+        var pool = System.Buffers.ArrayPool<byte>.Shared;
+        var rentedInput = pool.Rent(data.Length);
+        data.CopyTo(rentedInput);
+        try
+        {
+            var properties = new byte[PropertyLengthBytes];
+            Array.Copy(rentedInput, 0, properties, 0, PropertyLengthBytes);
+            
+            using var input = new MemoryStream(rentedInput, PropertyLengthBytes, data.Length - PropertyLengthBytes, writable: false);
+            using var lzma = LzmaStream.Create(properties, input, input.Length, expectedDecompressedSize, leaveOpen: false);
+            
+            if (expectedDecompressedSize > 0)
+            {
+                var decompressed = new byte[expectedDecompressedSize];
+                var readBuffer = pool.Rent(Math.Min(expectedDecompressedSize, 64 * 1024));
+                try
+                {
+                    var totalRead = 0;
+                    while (totalRead < expectedDecompressedSize)
+                    {
+                        var remaining = expectedDecompressedSize - totalRead;
+                        var toRead = Math.Min(remaining, readBuffer.Length);
+                        var read = lzma.Read(readBuffer, 0, toRead);
+                        if (read <= 0)
+                        {
+                            break;
+                        }
+                        Array.Copy(readBuffer, 0, decompressed, totalRead, read);
+                        totalRead += read;
+                    }
+                    if (totalRead != expectedDecompressedSize)
+                    {
+                        throw new InvalidDataException($"LZMA decompression output size mismatch. Expected {expectedDecompressedSize}, got {totalRead}.");
+                    }
+                }
+                finally
+                {
+                    pool.Return(readBuffer);
+                }
+                return decompressed;
+            }
+            else
+            {
+                using var output = new MemoryStream();
+                lzma.CopyTo(output);
+                return output.ToArray();
+            }
+        }
+        finally
+        {
+            pool.Return(rentedInput);
+        }
     }
 }
