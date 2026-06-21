@@ -37,12 +37,38 @@ public sealed class RarArchiveWriter
             ArchiveVolumePathHelper.DeleteExistingVolumes(outputArchivePath);
         }
 
+        var totalBytes = scanned.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
+
+        var commonParent = GetCommonParent(inputPaths, out var relativePaths);
+        if (commonParent is not null)
+        {
+            progress?.Report(new ArchiveOperationProgress
+            {
+                CurrentItem = "Compressing directly...",
+                ProcessedBytes = 0,
+                TotalBytes = totalBytes,
+                Percent = 0
+            });
+            await RunRarAsync(executable, commonParent, Path.GetFullPath(outputArchivePath), options, relativePaths, cancellationToken).ConfigureAwait(false);
+            progress?.Report(new ArchiveOperationProgress
+            {
+                CurrentItem = Path.GetFileName(outputArchivePath),
+                ProcessedBytes = totalBytes,
+                TotalBytes = totalBytes,
+                Percent = 100
+            });
+            return;
+        }
+
         var stagingRoot = Path.Combine(Path.GetTempPath(), $"laplace-rar-{Guid.NewGuid():N}");
         try
         {
-            var totalBytes = scanned.Where(x => !x.IsDirectory).Sum(x => new FileInfo(x.FullPath).Length);
             var copiedBytes = await StageInputsAsync(scanned, stagingRoot, totalBytes, progress, cancellationToken).ConfigureAwait(false);
-            await RunRarAsync(executable, stagingRoot, Path.GetFullPath(outputArchivePath), options, cancellationToken).ConfigureAwait(false);
+            var entries = Directory.EnumerateFileSystemEntries(stagingRoot)
+                .Select(Path.GetFileName)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!);
+            await RunRarAsync(executable, stagingRoot, Path.GetFullPath(outputArchivePath), options, entries, cancellationToken).ConfigureAwait(false);
             progress?.Report(new ArchiveOperationProgress
             {
                 CurrentItem = Path.GetFileName(outputArchivePath),
@@ -104,24 +130,21 @@ public sealed class RarArchiveWriter
 
     private static async Task RunRarAsync(
         string executable,
-        string stagingRoot,
+        string workingDirectory,
         string outputArchivePath,
         CreateArchiveOptions options,
+        IEnumerable<string> entries,
         CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo
         {
             FileName = executable,
-            WorkingDirectory = stagingRoot,
+            WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             RedirectStandardError = true,
             RedirectStandardOutput = true,
             CreateNoWindow = true
         };
-        var entries = Directory.EnumerateFileSystemEntries(stagingRoot)
-            .Select(Path.GetFileName)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x!);
         foreach (var argument in BuildRarArguments(outputArchivePath, options, entries))
         {
             startInfo.ArgumentList.Add(argument);
@@ -308,5 +331,66 @@ public sealed class RarArchiveWriter
         {
             // best-effort cleanup
         }
+    }
+
+    private static string? GetCommonParent(IEnumerable<string> inputPaths, out List<string> relativePaths)
+    {
+        relativePaths = new List<string>();
+        var resolvedPaths = inputPaths.Select(Path.GetFullPath).ToList();
+        if (resolvedPaths.Count == 0)
+        {
+            return null;
+        }
+
+        var firstPath = resolvedPaths[0];
+        var commonParent = Path.GetDirectoryName(firstPath);
+        if (string.IsNullOrEmpty(commonParent))
+        {
+            return null;
+        }
+
+        for (int i = 1; i < resolvedPaths.Count; i++)
+        {
+            var p = resolvedPaths[i];
+            while (!string.IsNullOrEmpty(commonParent) && 
+                   !p.StartsWith(commonParent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && 
+                   !string.Equals(p, commonParent, StringComparison.OrdinalIgnoreCase))
+            {
+                commonParent = Path.GetDirectoryName(commonParent);
+            }
+        }
+
+        if (string.IsNullOrEmpty(commonParent) || !Directory.Exists(commonParent))
+        {
+            return null;
+        }
+
+        var commonParentNormalized = commonParent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        foreach (var p in resolvedPaths)
+        {
+            if (string.Equals(p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), commonParent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+            {
+                commonParent = Path.GetDirectoryName(commonParent);
+                if (string.IsNullOrEmpty(commonParent))
+                {
+                    return null;
+                }
+                commonParentNormalized = commonParent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                break;
+            }
+        }
+
+        foreach (var p in resolvedPaths)
+        {
+            if (!p.StartsWith(commonParentNormalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            var rel = Path.GetRelativePath(commonParentNormalized, p);
+            relativePaths.Add(rel);
+        }
+
+        return commonParentNormalized;
     }
 }

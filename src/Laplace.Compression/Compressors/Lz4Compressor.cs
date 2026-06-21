@@ -11,11 +11,11 @@ public sealed class Lz4Compressor : IBlockCompressor
 
     public byte[] Compress(ReadOnlySpan<byte> data)
     {
-        return LZ4Pickler.Pickle(data.ToArray(), LZ4Level.L00_FAST);
+        return LZ4Pickler.Pickle(data, LZ4Level.L00_FAST);
     }
 
     public byte[] Decompress(ReadOnlySpan<byte> data, int expectedDecompressedSize)
     {
-        return LZ4Pickler.Unpickle(data.ToArray());
+        return LZ4Pickler.Unpickle(data);
     }
 }

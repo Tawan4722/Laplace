@@ -14,8 +14,7 @@ public sealed class DeflateCompressor : IBlockCompressor
         using var output = new MemoryStream();
         using (var deflate = new DeflateStream(output, CompressionLevel.SmallestSize, leaveOpen: true))
         {
-            var bytes = data.ToArray();
-            deflate.Write(bytes, 0, bytes.Length);
+            deflate.Write(data);
         }
 
         return output.ToArray();

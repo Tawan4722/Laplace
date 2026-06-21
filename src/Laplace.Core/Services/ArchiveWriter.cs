@@ -784,10 +784,9 @@ public sealed class ArchiveWriter
             return (CompressionMethod.Raw, [], true);
         }
 
-        var sampleBytes = options.Mode == CompressionMode.Extreme
+        ReadOnlySpan<byte> sample = options.Mode == CompressionMode.Extreme
             ? BuildExtremeSample(blockData)
-            : blockData[..Math.Min(blockData.Length, 64 * 1024)].ToArray();
-        var sample = sampleBytes.AsSpan();
+            : blockData[..Math.Min(blockData.Length, 64 * 1024)];
         var analysis = _adaptiveCompressionEngine.Analyze(relativePath, sample);
         var bestMethod = SelectPreferredMethod(options, analysis, sample);
         if (bestMethod == CompressionMethod.LzmaMax &&

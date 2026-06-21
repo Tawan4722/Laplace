@@ -558,9 +558,15 @@ internal static class ReedSolomonCodec
             {
                 continue;
             }
+            var logCoeff = Galois.Log[coefficient];
+            var inputShard = inputs[input];
             for (var i = 0; i < shardSize; i++)
             {
-                output[i] ^= Galois.Multiply(coefficient, inputs[input][i]);
+                var inputVal = inputShard[i];
+                if (inputVal != 0)
+                {
+                    output[i] ^= Galois.Exp[logCoeff + Galois.Log[inputVal]];
+                }
             }
         }
     }
@@ -634,10 +640,10 @@ internal static class ReedSolomonCodec
         return work.Select(row => row[size..]).ToArray();
     }
 
-    private static class Galois
+    public static class Galois
     {
-        private static readonly byte[] Exp = BuildExp();
-        private static readonly byte[] Log = BuildLog();
+        public static readonly byte[] Exp = BuildExp();
+        public static readonly byte[] Log = BuildLog();
 
         public static byte Multiply(byte a, byte b)
             => a == 0 || b == 0 ? (byte)0 : Exp[Log[a] + Log[b]];
