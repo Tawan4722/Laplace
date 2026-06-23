@@ -29,13 +29,13 @@
 
   <ItemGroup>
     <!-- Add NuGet Windows SDK lib path for Native AOT linker -->
-    <LinkerArg Include="/LIBPATH:&quot;C:\Users\Waiyawat\.nuget\packages\microsoft.windows.sdk.cpp.x64\10.0.28000.1839\c\um\x64&quot;" />
-    <LinkerArg Include="/LIBPATH:&quot;C:\Users\Waiyawat\.nuget\packages\microsoft.windows.sdk.cpp.x64\10.0.28000.1839\c\ucrt\x64&quot;" />
+    <LinkerArg Include="/LIBPATH:&quot;$(PkgMicrosoft_Windows_SDK_cpp_x64)\c\um\x64&quot;" />
+    <LinkerArg Include="/LIBPATH:&quot;$(PkgMicrosoft_Windows_SDK_cpp_x64)\c\ucrt\x64&quot;" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.SDK.CPP" Version="10.0.28000.1839" />
-    <PackageReference Include="Microsoft.Windows.SDK.cpp.x64" Version="10.0.28000.1839" />
+    <PackageReference Include="Microsoft.Windows.SDK.cpp.x64" Version="10.0.28000.1839" GeneratePathProperty="true" />
   </ItemGroup>
 
   <Target Name="XesUwpCheckVersion" />
