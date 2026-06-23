@@ -4,6 +4,9 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 2.2.1 - 2026-06-23
+
+- Added Native AOT compilation and publish workflow for the SFX stub (`laplace-sfx-stub.exe`), resolving single-file apphost header/bundle corruption when payloads are appended.
 - Added Cloud Streaming & Selective Remote Extraction over HTTP/HTTPS range requests (using a seekable, cached `HttpRangeStream`).
 - Added Content-Defined Chunking (FastCDC) and Block-Level Deduplication via `--dedup` / `--cdc` options for non-solid archives.
 - Added Single-Use Temporary Web Share hosting via `laplace host <archive>` with a premium, glassmorphic dark-mode web dashboard.
