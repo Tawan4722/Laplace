@@ -4,6 +4,11 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+## 2.2.2 - 2026-06-23
+
+- Implemented dynamic and portable Windows SDK path resolution inside the Native AOT SFX stub project file.
+- Fixed absolute local NuPkg paths that caused compilation failures on remote CI/CD build environments.
+
 ## 2.2.1 - 2026-06-23
 
 - Added Native AOT compilation and publish workflow for the SFX stub (`laplace-sfx-stub.exe`), resolving single-file apphost header/bundle corruption when payloads are appended.
