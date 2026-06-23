@@ -1,4 +1,4 @@
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.10.35013.160
 MinimumVisualStudioVersion = 10.0.40219.1
@@ -13,6 +13,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.Tests", "tests\Laplace.Tests\Laplace.Tests.csproj", "{29086C18-C4E2-4D5A-91C1-DB3D7B8D90BF}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.Desktop", "src\Laplace.Desktop\Laplace.Desktop.csproj", "{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{25D869B6-14E3-4A1A-87FB-D1FAC312C414}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Laplace.SfxStub", "src\Laplace.SfxStub\Laplace.SfxStub.csproj", "{9F3533C0-4FF7-4DEB-AC20-BB481640FB36}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -44,8 +48,15 @@ Global
 		{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DA0B72A4-F16E-4D31-8CE8-5E406EA4EEBD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F3533C0-4FF7-4DEB-AC20-BB481640FB36}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F3533C0-4FF7-4DEB-AC20-BB481640FB36}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F3533C0-4FF7-4DEB-AC20-BB481640FB36}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F3533C0-4FF7-4DEB-AC20-BB481640FB36}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9F3533C0-4FF7-4DEB-AC20-BB481640FB36} = {25D869B6-14E3-4A1A-87FB-D1FAC312C414}
 	EndGlobalSection
 EndGlobal

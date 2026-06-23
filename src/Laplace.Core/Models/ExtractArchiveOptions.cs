@@ -7,4 +7,5 @@ public sealed class ExtractArchiveOptions
     public IReadOnlySet<long>? SelectedEntryIds { get; set; }
     public PasswordContext? Password { get; set; }
     public int Threads { get; set; } = Environment.ProcessorCount;
+    public bool ContinueOnError { get; set; }
 }

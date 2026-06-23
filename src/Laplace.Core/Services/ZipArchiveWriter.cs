@@ -13,7 +13,7 @@ public sealed class ZipArchiveWriter
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var scanned = ArchivePathScanner.Scan(inputPaths)
+        var scanned = ArchivePathScanner.Scan(inputPaths, options.IncludePatterns, options.ExcludePatterns)
             .OrderBy(x => x.RelativePath.Count(c => c == '/'))
             .ThenBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToList();

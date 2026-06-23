@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <XeWin10TargetVersion>7.0</XeWin10TargetVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <StripSymbols>true</StripSymbols>
+    <RootNamespace>Laplace.SfxStub</RootNamespace>
+    <AssemblyName>laplace-sfx-stub</AssemblyName>
+    
+    <!-- Workaround for MSB4184 SubString(8) / LastIndexOf('-') bug in ILCompiler targets -->
+    <NETCoreSdkPortableRuntimeIdentifier></NETCoreSdkPortableRuntimeIdentifier>
+    <_hostOS>win</_hostOS>
+    <_targetOS>win</_targetOS>
+    <_hostArchitecture>x64</_hostArchitecture>
+    <_targetArchitecture>x64</_targetArchitecture>
+    <_hostPackageName>runtime.win-x64.Microsoft.DotNet.ILCompiler</_hostPackageName>
+    <_targetPackageName>runtime.win-x64.Microsoft.DotNet.ILCompiler</_targetPackageName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Laplace.Core\Laplace.Core.csproj" />
+    <ProjectReference Include="..\Laplace.Compression\Laplace.Compression.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Add NuGet Windows SDK lib path for Native AOT linker -->
+    <LinkerArg Include="/LIBPATH:&quot;C:\Users\Waiyawat\.nuget\packages\microsoft.windows.sdk.cpp.x64\10.0.28000.1839\c\um\x64&quot;" />
+    <LinkerArg Include="/LIBPATH:&quot;C:\Users\Waiyawat\.nuget\packages\microsoft.windows.sdk.cpp.x64\10.0.28000.1839\c\ucrt\x64&quot;" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.CPP" Version="10.0.28000.1839" />
+    <PackageReference Include="Microsoft.Windows.SDK.cpp.x64" Version="10.0.28000.1839" />
+  </ItemGroup>
+
+  <Target Name="XesUwpCheckVersion" />
+
+  <Target Name="PrintAotDebug" BeforeTargets="PrepareForBuild">
+    <Message Importance="High" Text="--- AOT DEBUG INFO ---" />
+    <Message Importance="High" Text="RuntimeIdentifier: '$(RuntimeIdentifier)'" />
+    <Message Importance="High" Text="NETCoreSdkPortableRuntimeIdentifier: '$(NETCoreSdkPortableRuntimeIdentifier)'" />
+    <Message Importance="High" Text="OS: '$(OS)'" />
+    <Message Importance="High" Text="----------------------" />
+  </Target>
+</Project>

@@ -81,6 +81,11 @@ public static class LpcSfxHelper
 
     public static Stream OpenArchiveStream(string path)
     {
+        if (ArchiveFormatDetector.IsUrl(path))
+        {
+            return new HttpRangeStream(path);
+        }
+
         if (MultiVolumeStream.IsMultiVolumeFirstFile(path, out string firstVolPath))
         {
             return new MultiVolumeStream(firstVolPath);
@@ -110,15 +115,24 @@ public static class LpcSfxHelper
     public static string GetSfxStubPath()
     {
         var baseDir = AppContext.BaseDirectory;
-        var guiPath = Path.Combine(baseDir, "laplace-gui.exe");
-        if (File.Exists(guiPath))
-            return guiPath;
+        var stubName = "laplace-sfx-stub.exe";
+        var stubPath = Path.Combine(baseDir, stubName);
+        if (File.Exists(stubPath))
+            return stubPath;
 
         // Try searching sibling or parent paths for debugging/dev
         var currentDir = new DirectoryInfo(baseDir);
         while (currentDir != null)
         {
-            // Search for laplace-gui.exe recursively in bin directories of Laplace.Desktop
+            // Search for laplace-sfx-stub.exe recursively in bin directories of Laplace.SfxStub
+            var stubBin = Path.Combine(currentDir.FullName, "src", "Laplace.SfxStub", "bin");
+            if (Directory.Exists(stubBin))
+            {
+                var files = Directory.GetFiles(stubBin, stubName, SearchOption.AllDirectories);
+                if (files.Length > 0)
+                    return files[0];
+            }
+            // Search for laplace-gui.exe recursively in bin directories of Laplace.Desktop as fallback
             var desktopBin = Path.Combine(currentDir.FullName, "src", "Laplace.Desktop", "bin");
             if (Directory.Exists(desktopBin))
             {
@@ -129,6 +143,11 @@ public static class LpcSfxHelper
             currentDir = currentDir.Parent;
         }
 
-        return guiPath;
+        // Final fallback: check for laplace-gui.exe next to executable
+        var guiPath = Path.Combine(baseDir, "laplace-gui.exe");
+        if (File.Exists(guiPath))
+            return guiPath;
+
+        return stubPath;
     }
 }

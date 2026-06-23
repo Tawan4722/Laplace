@@ -240,19 +240,21 @@ Create an LPC, ZIP, 7z, or RAR archive from the specified input paths.
     *   `--threads <count>`: Number of worker threads.
     *   `--volume-size <size>`: Partition output into volumes.
     *   `--hide-names`: Encrypt entry metadata/names.
-    *   `--recovery-percent <N>`: Append Reed-Solomon recovery record percent.
-    *   `--verify` / `--no-verify`: Enable/disable immediate check after writing.
-    *   `--encrypt` / `--password <value>` / `--password-file <path>` / `--keyfile <path>`: Security parameters.
+    *   --include <glob> / --exclude <glob>: Repeatable inclusion/exclusion patterns.
+    *   --dedup: Enable block-level deduplication.
+    *   --cdc: Enable Content-Defined Chunking (FastCDC).
+    *   --min-chunk <size> / --avg-chunk <size> / --max-chunk <size>: FastCDC chunk boundaries.
+    *   --encrypt / --password <value> / --password-file <path> / --keyfile <path>: Security parameters.
 
 ### 2. `compress-beside`
 Compress a single file or directory and output the archive immediately beside it.
 *   **Syntax**: `laplace compress-beside <input_path> [options]`
-*   **Key Options**: Accepts same compression and security options as `compress`.
+*   **Key Options**: Accepts same compression, security, and glob filtering options as `compress`.
 
 ### 3. `estimate`
 Analyze input paths and sample data to estimate compression size, ratio, and recommended policies without writing an archive.
 *   **Syntax**: `laplace estimate <input_path...> [options]`
-*   **Key Options**: `--mode`, `--block-size`, `--solid`, `--threads`, `--json`.
+*   **Key Options**: `--mode`, `--block-size`, `--solid`, `--threads`, `--include`, `--exclude`, `--json`.
 
 ### 4. `extract`
 Extract all or matching contents of an archive to a destination folder.
@@ -261,6 +263,7 @@ Extract all or matching contents of an archive to a destination folder.
     *   `--name <glob>`: Match entry paths to extract only selected files.
     *   `--overwrite`: Replace existing files.
     *   `--verify` / `--no-verify`: Validate hashes/CRC before writing.
+    *   `--continue-on-error`: Skip files with extraction errors and report failures at the end.
     *   `--password` / `--password-file` / `--keyfile`: Access credentials.
 
 ### 5. `list`
@@ -368,6 +371,136 @@ Open the ISO-to-drive dialog in the desktop GUI to parse and dump an ISO image t
 ### 27. `integrate`
 Install, check status of, or uninstall the shell context menu integration and file registrations for the current user.
 *   **Syntax**: `laplace integrate <install|uninstall|status> [--cli-path <path>]`
+
+### 28. `host`
+Spin up a local web server displaying a premium web interface to browse and download files from an archive.
+*   **Syntax**: `laplace host <input_archive> [options]`
+*   **Key Options**:
+    *   `--port <port>`: Port to bind the server (default `8080`, falls back to next free port).
+    *   `--single-use`: Closes the web server automatically after the first successful download finishes.
+    *   `--password <value>`: Archive password for encrypted archives.
+
+> [!TIP]
+> **Remote Stream Support**: Commands that read or query archives (`extract`, `list`, `info`, `test`, `host`) support streaming remote LPC archives directly from HTTP/HTTPS URLs using Range requests, without downloading the full archive file.
+
+### Core API, Services & Function Reference
+
+Laplace is modularly built around a set of core C# services. Below is a comprehensive reference of all service classes, their public functions, signatures, and descriptions:
+
+### 1. Laplace.Core Assembly (`Laplace.Core.Services` Namespace)
+
+#### Archive Management & Write Operations
+*   **`ArchiveWriter`** ([ArchiveWriter.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveWriter.cs))
+    *   `Task<ArchiveWriteResult> WriteAsync(string outputPath, List<string> inputPaths, CreateArchiveOptions options, IProgress<ArchiveOperationProgress>? progress)`: Creates and writes a new LPC archive from input paths, handling threading, compression, and encryption.
+    *   `Task CompressAndWritePayloadBlockAsync(Stream targetStream, byte[] rawData, CompressionMethod method, CryptoContext? crypto, ArchiveWriteResult result)`: Compresses raw block payloads and writes them to the output stream.
+*   **`ArchiveEstimator`** ([ArchiveEstimator.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveEstimator.cs))
+    *   `Task<ArchiveEstimateResult> EstimateAsync(List<string> inputPaths, EstimateOptions options, IProgress<ArchiveOperationProgress>? progress)`: Simulates block packaging and compression to estimate compressed size.
+*   **`LpcArchiveMutationService`** ([LpcArchiveMutationService.cs](file:///e:/Laplace/src/Laplace.Core/Services/LpcArchiveMutationService.cs))
+    *   `Task AddEntriesAsync(string archivePath, List<string> inputPaths, MutationOptions options, IProgress<ArchiveOperationProgress>? progress)`: Appends new files/directories to an existing LPC archive.
+    *   `Task DeleteEntriesAsync(string archivePath, List<string> entryPathsOrGlobs, MutationOptions options, IProgress<ArchiveOperationProgress>? progress)`: Deletes matching file entries from an LPC archive.
+    *   `Task RenameEntryAsync(string archivePath, string entryPathOrId, string newEntryPath, MutationOptions options)`: Renames an archive file entry.
+    *   `Task UpdateCommentAsync(string archivePath, string? comment, MutationOptions options)`: Modifies or clears user comment metadata.
+    *   `Task LockArchiveAsync(string archivePath, MutationOptions options)`: Sets a permanent locked flag on the archive header to prevent further mutation.
+
+#### Extraction & Validation
+*   **`ArchiveExtractor`** ([ArchiveExtractor.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveExtractor.cs))
+    *   `Task<ArchiveExtractResult> ExtractAsync(string archivePath, string destinationFolder, ExtractArchiveOptions options, IProgress<ArchiveOperationProgress>? progress)`: Decompresses and extracts LPC archives, verifying SHA-256 and decrypting blocks.
+*   **`ArchiveTester`** ([ArchiveTester.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveTester.cs))
+    *   `Task<ArchiveTestResult> TestAsync(string archivePath, TestArchiveOptions options, IProgress<ArchiveOperationProgress>? progress)`: Performs dry-run extraction, checking all payload CRC32C and file SHA-256 hashes.
+*   **`ArchiveReader`** ([ArchiveReader.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveReader.cs))
+    *   `LpcHeader ReadHeaderOnly(string archivePath)`: Quick parse of the main LPC metadata header.
+    *   `LpcArchive ReadFullArchive(string archivePath, PasswordContext? password)`: Full parse of the file catalog, block layout, and encryption markers.
+*   **`ArchiveValidator`** ([ArchiveValidator.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveValidator.cs))
+    *   `void ValidateArchive(LpcArchive archive)`: Confirms structural offsets, file boundaries, and integrity signatures.
+*   **`ArchiveInfoBuilder`** ([ArchiveInfoBuilder.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveInfoBuilder.cs))
+    *   `Task<ArchiveInfo> BuildInfoAsync(string archivePath, PasswordContext? password)`: Builds an information model containing formats, block types, and compression efficiency.
+
+#### Self-Extracting Archives (SFX)
+*   **`LpcSfxHelper`** ([LpcSfxHelper.cs](file:///e:/Laplace/src/Laplace.Core/Services/LpcSfxHelper.cs))
+    *   `Task CreateSfxArchiveAsync(string stubPath, string payloadArchivePath, string outputSfxPath)`: Combines the Native AOT stub executable with an LPC payload file to build the SFX archive.
+    *   `bool IsSfxFile(string filePath)`: Returns true if the executable has an appended Laplace archive payload signature.
+    *   `string GetSfxStubPath()`: Resolves the location of the compiled `laplace-sfx-stub.exe`.
+
+#### Security & Cryptography
+*   **`ArchiveEncryption`** ([ArchiveEncryption.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveEncryption.cs))
+    *   `byte[] DeriveKey(string password, byte[] salt, KeyDerivationInfo info)`: Derives keys using Argon2id or PBKDF2.
+    *   `byte[] EncryptBlock(byte[] plaintext, byte[] key, byte[] nonce, out byte[] tag)`: Runs AES-256-GCM authenticated encryption.
+    *   `byte[] DecryptBlock(byte[] ciphertext, byte[] key, byte[] nonce, byte[] tag)`: Decrypts and authenticates payload blocks.
+*   **`ArchivePasswordPolicy`** ([ArchivePasswordPolicy.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchivePasswordPolicy.cs))
+    *   `PasswordStrength Evaluate(string password)`: Analyzes entropy, characters, and common patterns.
+
+#### Error Recovery & Resilience
+*   **`LpcRecoveryService`** ([LpcRecoveryService.cs](file:///e:/Laplace/src/Laplace.Core/Services/LpcRecoveryService.cs))
+    *   `Task GenerateRecoveryRecords(string archivePath, double redundancyPercent, IProgress<double>? progress)`: Generates Reed-Solomon error correction codes for block arrays.
+    *   `Task<bool> RepairArchiveAsync(string archivePath, string outputPath, IProgress<double>? progress)`: Replaces corrupted or missing data segments using recovery records.
+
+#### Content-Defined Chunking & Analysis
+*   **`CdcChunkReader`** ([CdcChunkReader.cs](file:///e:/Laplace/src/Laplace.Core/Services/CdcChunkReader.cs))
+    *   `IEnumerable<CdcChunk> SegmentStream(Stream stream, CdcOptions options)`: Splits a continuous file stream using FastCDC rolling hash boundaries for deduplication.
+*   **`ArchiveFormatDetector`** ([ArchiveFormatDetector.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveFormatDetector.cs))
+    *   `ArchiveFormat Detect(string filePath)`: Identifies file signatures (magic bytes) for LPC, ZIP, 7Z, RAR, CAB, ISO, TAR, GZ, and others.
+
+#### Glob, Path, & Helper Utilities
+*   **`GlobFilter`** ([GlobFilter.cs](file:///e:/Laplace/src/Laplace.Core/Services/GlobFilter.cs))
+    *   `bool Matches(string path, string pattern)`: Matches a path against glob wildcard patterns (e.g. `**/*.txt`).
+*   **`ArchivePathHelper`** ([ArchivePathHelper.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchivePathHelper.cs))
+    *   `string NormalizePath(string path)`: Standardizes slashes and directory separators.
+    *   `bool IsSafePath(string path)`: Checks for directory traversal attacks, reserved names, or alternate streams.
+*   **`ArchivePathScanner`** ([ArchivePathScanner.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchivePathScanner.cs))
+    *   `List<string> Scan(IEnumerable<string> paths)`: Expands directories recursively, gathering files to process.
+*   **`ArchiveVolumePathHelper`** ([ArchiveVolumePathHelper.cs](file:///e:/Laplace/src/Laplace.Core/Services/ArchiveVolumePathHelper.cs))
+    *   `List<string> GenerateVolumeNames(string baseName, int count)`: Generates filenames for multi-volume spanned archives.
+*   **`ChecksumService`** ([ChecksumService.cs](file:///e:/Laplace/src/Laplace.Core/Services/ChecksumService.cs))
+    *   `uint CalculateCRC32C(byte[] data)`: Fast CRC32C computation.
+    *   `byte[] CalculateSHA256(Stream stream)`: Standard SHA-256 hashing.
+
+#### Stream & I/O Adaptors
+*   **`HttpRangeStream`** ([HttpRangeStream.cs](file:///e:/Laplace/src/Laplace.Core/Services/HttpRangeStream.cs))
+    *   `int Read(byte[] buffer, int offset, int count)`: Implements random access over remote HTTP URLs using HTTP Range requests.
+*   **`MultiVolumeStream`** ([MultiVolumeStream.cs](file:///e:/Laplace/src/Laplace.Core/Services/MultiVolumeStream.cs))
+    *   Allows reading from multi-volume archives sequentially as a single contiguous stream.
+*   **`SubStream`** ([SubStream.cs](file:///e:/Laplace/src/Laplace.Core/Services/SubStream.cs))
+    *   Exposes a bounded segment of a parent stream as a standalone stream.
+*   **`BinaryCodec`** ([BinaryCodec.cs](file:///e:/Laplace/src/Laplace.Core/Services/BinaryCodec.cs))
+    *   Encodes and decodes primitive types with endian-safe structures.
+
+#### Third-Party Tool Adaptors & Formats
+*   **`UniversalArchiveService`** ([UniversalArchiveService.cs](file:///e:/Laplace/src/Laplace.Core/Services/UniversalArchiveService.cs))
+    *   `Task<List<ArchiveEntry>> ListEntriesAsync(string path, PasswordContext? pwd)`: Lists file items in any supported format.
+    *   `Task ExtractAsync(string path, string outDir, ExtractArchiveOptions options, IProgress<ArchiveOperationProgress>? progress)`: Universal entry extractor.
+    *   `Task<ArchiveTestResult> TestAsync(string path, TestArchiveOptions options)`: Universal entry tester.
+*   **`ZipArchiveWriter`** ([ZipArchiveWriter.cs](file:///e:/Laplace/src/Laplace.Core/Services/ZipArchiveWriter.cs)) & **`ZipArchiveHandler`** ([ZipArchiveHandler.cs](file:///e:/Laplace/src/Laplace.Core/Services/ZipArchiveHandler.cs))
+    *   Write and read ZIP format natively, supporting AES-256 standard encryption.
+*   **`SevenZipArchiveWriter`** ([SevenZipArchiveWriter.cs](file:///e:/Laplace/src/Laplace.Core/Services/SevenZipArchiveWriter.cs)) & **`RarArchiveWriter`** ([RarArchiveWriter.cs](file:///e:/Laplace/src/Laplace.Core/Services/RarArchiveWriter.cs))
+    *   Interfaces and command lines to write 7z and RAR archives.
+*   **`RarToolCommandService`** ([RarToolCommandService.cs](file:///e:/Laplace/src/Laplace.Core/Services/RarToolCommandService.cs))
+    *   Locates and invokes external `rar.exe` or `WinRAR.exe` commands.
+*   **`SharpCompressArchiveHandler`** ([SharpCompressArchiveHandler.cs](file:///e:/Laplace/src/Laplace.Core/Services/SharpCompressArchiveHandler.cs))
+    *   Exposes extraction and listing logic for CAB, TAR, GZIP, BZIP2, and Zstd.
+*   **`WindowsNativeArchiveHandler`** ([WindowsNativeArchiveHandler.cs](file:///e:/Laplace/src/Laplace.Core/Services/WindowsNativeArchiveHandler.cs))
+    *   Leverages Windows `tar.exe` / libarchive commands as extraction fallbacks.
+
+---
+
+### 2. Laplace.Compression Assembly (`Laplace.Compression` Namespace)
+
+*   **`CompressorRegistry`** ([CompressorRegistry.cs](file:///e:/Laplace/src/Laplace.Compression/CompressorRegistry.cs))
+    *   `ICompressor GetCompressor(CompressionMethod method)`: Retrieves the compressor instance registered for the method.
+    *   `void RegisterCompressor(CompressionMethod method, ICompressor compressor)`: Adds a compressor implementation to the registry.
+*   **`ICompressor` Interface** (Implemented by raw, LZ4, Zstd, LZMA, Blosc2, and external formats):
+    *   `byte[] Compress(byte[] input)`: Compresses a byte block.
+    *   `byte[] Decompress(byte[] input, int decompressedLength)`: Decompresses a byte block.
+
+---
+
+### 3. Laplace.ShellIntegration Assembly (`Laplace.ShellIntegration` Namespace)
+
+*   **`ShellIntegrationManager`** ([ShellIntegrationManager.cs](file:///e:/Laplace/src/Laplace.ShellIntegration/ShellIntegrationManager.cs))
+    *   `ShellIntegrationStatus GetStatus()`: Checks if context menus and file associations are registered in the Windows Registry (`HKCU\Software\Classes`).
+    *   `void Install(string cliPath)`: Creates Registry keys, adding Explorer right-click commands for compressing, extracting, testing, repairing, and viewing files.
+    *   `void Uninstall()`: Removes all registered explorer extension keys.
+
+---
 
 ## Explorer Integration
 

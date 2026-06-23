@@ -75,6 +75,7 @@ internal static class Program
                 "split" => await SplitAsync(archives, remaining).ConfigureAwait(false),
                 "view" => await ViewAsync(mutator, remaining).ConfigureAwait(false),
                 "repair" => await RepairAsync(rarTools, recovery, remaining).ConfigureAwait(false),
+                "host" => await HostAsync(archives, extractor, reader, remaining).ConfigureAwait(false),
                 "benchmark" => await BenchmarkAsync(writer, extractor, reader, remaining).ConfigureAwait(false),
                 "open" => OpenCommand(remaining),
                 "extract-here" => await ExtractHereAsync(archives, remaining).ConfigureAwait(false),
@@ -424,7 +425,7 @@ internal static class Program
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace extract <input_archive> <output_folder> [--overwrite] [--verify|--no-verify] [--quiet] [--password <value>|--password-file <path>|--keyfile <path>]");
+            Console.Error.WriteLine("Usage: laplace extract <input_archive> <output_folder> [--overwrite] [--verify|--no-verify] [--quiet] [--continue-on-error] [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -435,6 +436,7 @@ internal static class Program
         var quiet = IsQuiet(args);
         var json = IsJson(args);
         var dryRun = IsDryRun(args);
+        var continueOnError = args.Any(x => x.Equals("--continue-on-error", StringComparison.OrdinalIgnoreCase));
         var namePatterns = ReadPatternValues(args, "--name");
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(
@@ -457,7 +459,8 @@ internal static class Program
                     namePatterns,
                     selectedEntryCount = selectedEntryIds?.Count,
                     overwrite,
-                    verifyChecksums
+                    verifyChecksums,
+                    continueOnError
                 });
             return 0;
         }
@@ -468,7 +471,7 @@ internal static class Program
             Console.WriteLine($"Extracting '{inputArchive}' -> '{outputFolder}'");
         }
 
-        await RunWithPasswordRetryAsync(
+        var extractResult = await RunWithPasswordRetryAsync(
             inputArchive,
             "Extract archive",
             passwordOptions,
@@ -481,7 +484,8 @@ internal static class Program
                     Overwrite = overwrite,
                     VerifyChecksums = verifyChecksums,
                     SelectedEntryIds = resolvedPassword == password ? selectedEntryIds : await ResolveSelectedEntryIdsAsync(archives, inputArchive, passwordOptions, resolvedPassword, namePatterns).ConfigureAwait(false),
-                    Password = resolvedPassword
+                    Password = resolvedPassword,
+                    ContinueOnError = continueOnError
                 },
                 quiet ? null : ProgressToConsole(json)).ConfigureAwait(false)).ConfigureAwait(false);
 
@@ -498,6 +502,11 @@ internal static class Program
                 selectedEntryCount = selectedEntryIds?.Count,
                 overwrite,
                 verifyChecksums,
+                continueOnError,
+                succeededFiles = extractResult.SucceededFiles,
+                failedFiles = extractResult.FailedFiles,
+                errors = extractResult.Errors.Select(e => new { relativePath = e.RelativePath, reason = e.Reason }),
+                hasErrors = extractResult.HasErrors,
                 elapsedSeconds = stopwatch.Elapsed.TotalSeconds
             });
         }
@@ -505,9 +514,18 @@ internal static class Program
         {
             Console.WriteLine();
             Console.WriteLine($"Extraction completed in {stopwatch.Elapsed.TotalSeconds:F2}s.");
+            if (extractResult.HasErrors)
+            {
+                Console.WriteLine($"Extracted {extractResult.SucceededFiles} files successfully. {extractResult.FailedFiles} files failed.");
+                Console.WriteLine("Errors:");
+                foreach (var err in extractResult.Errors)
+                {
+                    Console.WriteLine($"  {err.RelativePath}: {err.Reason}");
+                }
+            }
         }
 
-        return 0;
+        return extractResult.HasErrors ? 3 : 0;
     }
 
     private static async Task<int> ListAsync(UniversalArchiveService archives, string[] args)
@@ -1636,6 +1654,39 @@ internal static class Program
             {
                 options.RecoveryPercent = int.Parse(args[++i]);
             }
+            else if (current == "--include" && i + 1 < args.Length)
+            {
+                var list = options.IncludePatterns as List<string> ?? new List<string>();
+                list.Add(args[++i]);
+                options.IncludePatterns = list;
+            }
+            else if (current == "--exclude" && i + 1 < args.Length)
+            {
+                var list = options.ExcludePatterns as List<string> ?? new List<string>();
+                list.Add(args[++i]);
+                options.ExcludePatterns = list;
+            }
+            else if (current == "--dedup")
+            {
+                options.Deduplicate = true;
+                options.UseCdc = true;
+            }
+            else if (current == "--cdc")
+            {
+                options.UseCdc = true;
+            }
+            else if (current == "--min-chunk" && i + 1 < args.Length)
+            {
+                options.MinChunkSize = (int)ParseSize(args[++i]);
+            }
+            else if (current == "--avg-chunk" && i + 1 < args.Length)
+            {
+                options.AvgChunkSize = (int)ParseSize(args[++i]);
+            }
+            else if (current == "--max-chunk" && i + 1 < args.Length)
+            {
+                options.MaxChunkSize = (int)ParseSize(args[++i]);
+            }
         }
 
         return options;
@@ -2353,13 +2404,14 @@ internal static class Program
         Console.WriteLine("Laplace CLI");
         Console.WriteLine("Global options on supported commands: --json for machine-readable output, --dry-run for non-mutating previews, --from-file for newline-delimited operand lists.");
         Console.WriteLine("Commands:");
-        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--volume-size 700M] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--json]");
-        Console.WriteLine("  laplace extract <input_archive> <output_folder> [--name <glob>] [--overwrite] [--verify|--no-verify] [--quiet] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace compress <input_path...> [output.lpc|output.zip|output.7z|output.rar] [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--volume-size 700M] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--include <glob>] [--exclude <glob>] [--dedup] [--cdc] [--min-chunk size] [--avg-chunk size] [--max-chunk size] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace compress-beside <input_path> [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--hide-names] [--recovery-percent N] [--verify|--no-verify] [--include <glob>] [--exclude <glob>] [--dedup] [--cdc] [--min-chunk size] [--avg-chunk size] [--max-chunk size] [--quiet] [--json] [--dry-run] [--encrypt|--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace estimate <input_path...> [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--block-size 8M] [--solid on|off|auto] [--threads N] [--include <glob>] [--exclude <glob>] [--json]");
+        Console.WriteLine("  laplace extract <input_archive> <output_folder> [--name <glob>] [--overwrite] [--verify|--no-verify] [--continue-on-error] [--quiet] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace list <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace info <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace test <input_archive> [--json] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace host <input_archive> [--port <port>] [--single-use] [--password <password>]");
         Console.WriteLine("  laplace add <archive> <input_path...> [--from-file <path>] [--mode fast|balanced|maximum|intensive|compressed|extreme|auto] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace freshen <archive> <input_path...> [--from-file <path>] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace delete <archive> <entry_path_or_id_or_glob...> [--from-file <path>] [--json] [--dry-run] [--password <value>|--password-file <path>|--keyfile <path>]");
@@ -2374,9 +2426,9 @@ internal static class Program
         Console.WriteLine("  laplace repair <archive.lpc|archive.rar>");
         Console.WriteLine("  laplace benchmark <input_path> [--json]");
         Console.WriteLine("  laplace open <archive.lpc>");
-        Console.WriteLine("  laplace extract-here <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>|--keyfile <path>]");
-        Console.WriteLine("  laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace extract-here <archive> [--continue-on-error] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace extract-to-folder <archive> <output_folder> [--continue-on-error] [--password <value>|--password-file <path>|--keyfile <path>]");
+        Console.WriteLine("  laplace extract-to-named-folder <archive> [--continue-on-error] [--password <value>|--password-file <path>|--keyfile <path>]");
         Console.WriteLine("  laplace extract-dialog <archive>");
         Console.WriteLine("  laplace iso-to-drive-dialog <image.iso>");
         Console.WriteLine("  laplace integrate install|uninstall|status [--cli-path <path-to-laplace.exe>]");
@@ -2652,7 +2704,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace extract-here <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
+            Console.Error.WriteLine("Usage: laplace extract-here <archive> [--continue-on-error] [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -2661,7 +2713,9 @@ internal static class Program
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         ValidatePasswordContextForArchiveRead(archivePath, password);
-        await RunWithPasswordRetryAsync(
+        var continueOnError = args.Any(x => x.Equals("--continue-on-error", StringComparison.OrdinalIgnoreCase));
+
+        var extractResult = await RunWithPasswordRetryAsync(
             archivePath,
             "Extract archive",
             passwordOptions,
@@ -2670,8 +2724,21 @@ internal static class Program
             {
                 Overwrite = false,
                 VerifyChecksums = true,
-                Password = resolvedPassword
+                Password = resolvedPassword,
+                ContinueOnError = continueOnError
             }).ConfigureAwait(false)).ConfigureAwait(false);
+
+        if (extractResult.HasErrors)
+        {
+            Console.WriteLine($"Extracted {extractResult.SucceededFiles} files successfully. {extractResult.FailedFiles} files failed.");
+            Console.WriteLine("Errors:");
+            foreach (var err in extractResult.Errors)
+            {
+                Console.WriteLine($"  {err.RelativePath}: {err.Reason}");
+            }
+            return 3;
+        }
+
         Console.WriteLine($"Extracted to: {target}");
         return 0;
     }
@@ -2680,14 +2747,16 @@ internal static class Program
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: laplace extract-to-folder <archive> <output_folder> [--password <value>|--password-file <path>|--keyfile <path>]");
+            Console.Error.WriteLine("Usage: laplace extract-to-folder <archive> <output_folder> [--continue-on-error] [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(args[0], "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         ValidatePasswordContextForArchiveRead(args[0], password);
-        await RunWithPasswordRetryAsync(
+        var continueOnError = args.Any(x => x.Equals("--continue-on-error", StringComparison.OrdinalIgnoreCase));
+
+        var extractResult = await RunWithPasswordRetryAsync(
             args[0],
             "Extract archive",
             passwordOptions,
@@ -2696,8 +2765,21 @@ internal static class Program
             {
                 Overwrite = false,
                 VerifyChecksums = true,
-                Password = resolvedPassword
+                Password = resolvedPassword,
+                ContinueOnError = continueOnError
             }).ConfigureAwait(false)).ConfigureAwait(false);
+
+        if (extractResult.HasErrors)
+        {
+            Console.WriteLine($"Extracted {extractResult.SucceededFiles} files successfully. {extractResult.FailedFiles} files failed.");
+            Console.WriteLine("Errors:");
+            foreach (var err in extractResult.Errors)
+            {
+                Console.WriteLine($"  {err.RelativePath}: {err.Reason}");
+            }
+            return 3;
+        }
+
         Console.WriteLine($"Extracted to: {args[1]}");
         return 0;
     }
@@ -2706,7 +2788,7 @@ internal static class Program
     {
         if (args.Length < 1)
         {
-            Console.Error.WriteLine("Usage: laplace extract-to-named-folder <archive> [--password <value>|--password-file <path>|--keyfile <path>]");
+            Console.Error.WriteLine("Usage: laplace extract-to-named-folder <archive> [--continue-on-error] [--password <value>|--password-file <path>|--keyfile <path>]");
             return 1;
         }
 
@@ -2715,7 +2797,9 @@ internal static class Program
         var passwordOptions = ParsePasswordOptions(args);
         var password = await ResolvePasswordAsync(passwordOptions, new PasswordRequest(archivePath, "Extract archive", IsWrite: false), passwordOptions.HasExplicitSecret).ConfigureAwait(false);
         ValidatePasswordContextForArchiveRead(archivePath, password);
-        await RunWithPasswordRetryAsync(
+        var continueOnError = args.Any(x => x.Equals("--continue-on-error", StringComparison.OrdinalIgnoreCase));
+
+        var extractResult = await RunWithPasswordRetryAsync(
             archivePath,
             "Extract archive",
             passwordOptions,
@@ -2724,8 +2808,21 @@ internal static class Program
             {
                 Overwrite = false,
                 VerifyChecksums = true,
-                Password = resolvedPassword
+                Password = resolvedPassword,
+                ContinueOnError = continueOnError
             }).ConfigureAwait(false)).ConfigureAwait(false);
+
+        if (extractResult.HasErrors)
+        {
+            Console.WriteLine($"Extracted {extractResult.SucceededFiles} files successfully. {extractResult.FailedFiles} files failed.");
+            Console.WriteLine("Errors:");
+            foreach (var err in extractResult.Errors)
+            {
+                Console.WriteLine($"  {err.RelativePath}: {err.Reason}");
+            }
+            return 3;
+        }
+
         Console.WriteLine($"Extracted to: {folder}");
         return 0;
     }
@@ -2909,5 +3006,797 @@ internal static class Program
         {
             // ignore cleanup failures
         }
+    }
+
+    private static async Task<int> HostAsync(
+        UniversalArchiveService archives,
+        ArchiveExtractor extractor,
+        ArchiveReader reader,
+        string[] args)
+    {
+        if (args.Length == 0)
+        {
+            Console.Error.WriteLine("Usage: laplace host <archive_path> [--port <port>] [--single-use] [--password <password>]");
+            return 1;
+        }
+
+        var archivePath = Path.GetFullPath(args[0]);
+        if (!File.Exists(archivePath))
+        {
+            Console.Error.WriteLine($"Archive not found: {archivePath}");
+            return 1;
+        }
+
+        int port = 8080;
+        bool singleUse = false;
+        
+        for (int i = 1; i < args.Length; i++)
+        {
+            var arg = args[i].ToLowerInvariant();
+            if (arg == "--port" && i + 1 < args.Length)
+            {
+                port = int.Parse(args[++i]);
+            }
+            else if (arg == "--single-use")
+            {
+                singleUse = true;
+            }
+        }
+
+        var isEncrypted = archives.IsEncrypted(archivePath);
+        var passOptions = ParsePasswordOptions(args);
+        var password = await ResolvePasswordAsync(passOptions, new PasswordRequest(archivePath, "read", false), requirePassword: isEncrypted).ConfigureAwait(false);
+
+        ArchiveDocument archive;
+        try
+        {
+            archive = reader.Read(archivePath, password);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to read archive: {ex.Message}");
+            return 1;
+        }
+
+        using var listener = new System.Net.HttpListener();
+        bool bound = false;
+        while (!bound && port < 65535)
+        {
+            try
+            {
+                listener.Prefixes.Clear();
+                listener.Prefixes.Add($"http://localhost:{port}/");
+                listener.Start();
+                bound = true;
+            }
+            catch (System.Net.HttpListenerException)
+            {
+                port++;
+            }
+        }
+
+        if (!bound)
+        {
+            Console.Error.WriteLine("Failed to bind HttpListener to any port.");
+            return 1;
+        }
+
+        Console.WriteLine($"Hosting Laplace archive: {Path.GetFileName(archivePath)}");
+        Console.WriteLine($"Url: http://localhost:{port}/");
+        if (singleUse)
+        {
+            Console.WriteLine("Single-use mode active. Server will terminate after the first download completes.");
+        }
+        Console.WriteLine("Press Ctrl+C or click 'Shutdown' in the web interface to exit.");
+
+        var tcs = new TaskCompletionSource<bool>();
+        Console.CancelKeyPress += (sender, e) =>
+        {
+            e.Cancel = true;
+            tcs.TrySetResult(true);
+        };
+
+        var encryptionKey = Array.Empty<byte>();
+        if (archive.Header.IsEncrypted && password is not null)
+        {
+            encryptionKey = ArchiveEncryption.DeriveKey(password, archive.Header);
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (listener.IsListening)
+                {
+                    var context = await listener.GetContextAsync().ConfigureAwait(false);
+                    _ = Task.Run(async () =>
+                    {
+                        var req = context.Request;
+                        var resp = context.Response;
+
+                        try
+                        {
+                            var urlPath = req.Url?.AbsolutePath ?? "/";
+                            if (urlPath == "/" || urlPath == "/index.html")
+                            {
+                                resp.ContentType = "text/html; charset=utf-8";
+                                var html = GetExplorerHtml(Path.GetFileName(archivePath), singleUse);
+                                var bytes = System.Text.Encoding.UTF8.GetBytes(html);
+                                resp.ContentLength64 = bytes.Length;
+                                await resp.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
+                            }
+                            else if (urlPath == "/api/list")
+                            {
+                                var queryPath = req.QueryString["path"] ?? "/";
+                                var list = GetDirectoryListing(archive, queryPath);
+                                var jsonBytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(list, JsonOptions);
+                                resp.ContentType = "application/json";
+                                resp.ContentLength64 = jsonBytes.Length;
+                                await resp.OutputStream.WriteAsync(jsonBytes).ConfigureAwait(false);
+                            }
+                            else if (urlPath == "/api/download")
+                            {
+                                var queryPath = req.QueryString["path"] ?? "";
+                                var fileEntry = archive.FileEntries.FirstOrDefault(e =>
+                                    !e.IsDirectory &&
+                                    ("/" + e.RelativePath.Replace('\\', '/')).Equals(queryPath, StringComparison.OrdinalIgnoreCase));
+
+                                if (fileEntry == null)
+                                {
+                                    resp.StatusCode = 404;
+                                    var error = System.Text.Encoding.UTF8.GetBytes("File not found in archive.");
+                                    resp.ContentLength64 = error.Length;
+                                    await resp.OutputStream.WriteAsync(error).ConfigureAwait(false);
+                                }
+                                else
+                                {
+                                    resp.ContentType = GetContentType(fileEntry.RelativePath);
+                                    resp.Headers.Add("Content-Disposition", $"attachment; filename=\"{Uri.EscapeDataString(Path.GetFileName(fileEntry.RelativePath))}\"");
+                                    resp.ContentLength64 = fileEntry.OriginalSize;
+
+                                    using var archiveStream = LpcSfxHelper.OpenArchiveStream(archivePath);
+                                    await extractor.ExtractFileToStreamAsync(archive, archiveStream, fileEntry, resp.OutputStream, encryptionKey).ConfigureAwait(false);
+                                    await resp.OutputStream.FlushAsync().ConfigureAwait(false);
+
+                                    if (singleUse)
+                                    {
+                                        tcs.TrySetResult(true);
+                                    }
+                                }
+                            }
+                            else if (urlPath == "/api/shutdown")
+                            {
+                                resp.StatusCode = 200;
+                                var ok = System.Text.Encoding.UTF8.GetBytes("Server shutting down.");
+                                resp.ContentLength64 = ok.Length;
+                                await resp.OutputStream.WriteAsync(ok).ConfigureAwait(false);
+                                resp.Close();
+                                tcs.TrySetResult(true);
+                                return;
+                            }
+                            else
+                            {
+                                resp.StatusCode = 404;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            try
+                            {
+                                resp.StatusCode = 500;
+                                var errBytes = System.Text.Encoding.UTF8.GetBytes(ex.Message);
+                                resp.ContentLength64 = errBytes.Length;
+                                await resp.OutputStream.WriteAsync(errBytes).ConfigureAwait(false);
+                            }
+                            catch { }
+                        }
+                        finally
+                        {
+                            try
+                            {
+                                resp.Close();
+                            }
+                            catch { }
+                        }
+                    });
+                }
+            }
+            catch (ObjectDisposedException) { }
+            catch
+            {
+                tcs.TrySetResult(false);
+            }
+        });
+
+        await tcs.Task.ConfigureAwait(false);
+
+        try
+        {
+            listener.Stop();
+        }
+        catch { }
+
+        if (encryptionKey.Length > 0)
+        {
+            CryptographicOperations.ZeroMemory(encryptionKey);
+        }
+
+        Console.WriteLine("\nServer shut down cleanly.");
+        return 0;
+    }
+
+    private static object GetDirectoryListing(ArchiveDocument archive, string queryPath)
+    {
+        long folderId = -1;
+        var normalized = queryPath.Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrEmpty(normalized))
+        {
+            var parts = normalized.Split('/');
+            long currentId = -1;
+            foreach (var part in parts)
+            {
+                var folder = archive.FileEntries.FirstOrDefault(e =>
+                    e.IsDirectory &&
+                    e.ParentFolderId == currentId &&
+                    GetNameFromRelativePath(e.RelativePath).Equals(part, StringComparison.OrdinalIgnoreCase));
+
+                if (folder == null)
+                {
+                    return new { error = "Directory not found" };
+                }
+                currentId = folder.EntryId;
+            }
+            folderId = currentId;
+        }
+
+        var results = new List<object>();
+        foreach (var entry in archive.FileEntries)
+        {
+            if (entry.ParentFolderId == folderId)
+            {
+                var name = GetNameFromRelativePath(entry.RelativePath);
+                var path = "/" + entry.RelativePath.Replace('\\', '/');
+                results.Add(new
+                {
+                    name = name,
+                    isDirectory = entry.IsDirectory,
+                    size = entry.IsDirectory ? 0 : entry.OriginalSize,
+                    path = path
+                });
+            }
+        }
+
+        return results;
+    }
+
+    private static string GetNameFromRelativePath(string relativePath)
+    {
+        var clean = relativePath.Replace('\\', '/').TrimEnd('/');
+        var idx = clean.LastIndexOf('/');
+        return idx >= 0 ? clean.Substring(idx + 1) : clean;
+    }
+
+    private static string GetContentType(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".html" or ".htm" => "text/html",
+            ".css" => "text/css",
+            ".js" => "application/javascript",
+            ".json" => "application/json",
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".svg" => "image/svg+xml",
+            ".pdf" => "application/pdf",
+            ".txt" => "text/plain",
+            ".mp3" => "audio/mpeg",
+            ".mp4" => "video/mp4",
+            _ => "application/octet-stream"
+        };
+    }
+
+    private static string GetExplorerHtml(string archiveName, bool singleUse)
+    {
+        var singleUseBadge = singleUse ? " <span class=\"status-badge warning\"><span class=\"status-dot\"></span>Single-Use</span>" : "";
+        var singleUseBanner = singleUse ? "<div class=\"single-use-banner\"><span>⚠️</span><span><strong>Single-Use Mode:</strong> The server is configured to stop hosting and shut down immediately after a file is downloaded.</span></div>" : "";
+
+        return $$"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laplace Web Share - {{archiveName}}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(22, 28, 45, 0.6);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-primary: #6366f1;
+            --accent-primary-hover: #4f46e5;
+            --accent-success: #10b981;
+            --accent-warning: #f59e0b;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.05) 0px, transparent 50%);
+            background-attachment: fixed;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 40px;
+            backdrop-filter: blur(12px);
+            background: rgba(11, 15, 25, 0.5);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent-primary), #10b981);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-family: 'Outfit', sans-serif;
+            color: white;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        }
+
+        .brand-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(to right, #f3f4f6, #9ca3af);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-badge {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--accent-success);
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-badge.warning {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            color: var(--accent-warning);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: currentColor;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .btn-shutdown {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-shutdown:hover {
+            background: #ef4444;
+            color: white;
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+        }
+
+        main {
+            flex: 1;
+            padding: 40px;
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .explorer-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .explorer-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .breadcrumbs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 500;
+            font-size: 16px;
+        }
+
+        .breadcrumb-item {
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: color 0.15s ease;
+        }
+
+        .breadcrumb-item:hover {
+            color: var(--text-primary);
+        }
+
+        .breadcrumb-item.active {
+            color: var(--text-primary);
+            cursor: default;
+        }
+
+        .breadcrumb-separator {
+            color: rgba(255, 255, 255, 0.2);
+        }
+
+        .file-list {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        .file-list th {
+            padding: 14px 24px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-secondary);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .file-list td {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 14px;
+            color: var(--text-primary);
+            vertical-align: middle;
+        }
+
+        .file-row {
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+
+        .file-row:hover {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+
+        .file-name-cell {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-weight: 500;
+        }
+
+        .icon {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .folder-icon {
+            color: #f59e0b;
+        }
+
+        .file-icon {
+            color: #3b82f6;
+        }
+
+        .size-cell {
+            color: var(--text-secondary);
+            font-family: monospace;
+        }
+
+        .action-cell {
+            text-align: right;
+        }
+
+        .btn-download {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+        }
+
+        .btn-download:hover {
+            background: var(--accent-primary);
+            color: white;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+        }
+
+        .empty-state {
+            padding: 80px 40px;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 16px;
+        }
+
+        footer {
+            text-align: center;
+            padding: 30px;
+            color: rgba(255, 255, 255, 0.2);
+            font-size: 12px;
+            margin-top: auto;
+        }
+
+        .single-use-banner {
+            background: linear-gradient(to right, rgba(245, 158, 11, 0.15), rgba(245, 158, 11, 0.05));
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 12px;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 14px;
+            color: #fbd38d;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">
+            <div class="brand-logo">L</div>
+            <div>
+                <h1 class="brand-title">{{archiveName}}</h1>
+                <div style="margin-top: 4px;">
+                    <span class="status-badge">
+                        <span class="status-dot"></span>
+                        Hosting Active
+                    </span>
+                    {{singleUseBadge}}
+                </div>
+            </div>
+        </div>
+        <button class="btn-shutdown" onclick="shutdownServer()">Shutdown</button>
+    </header>
+
+    <main>
+        {{singleUseBanner}}
+
+        <div class="explorer-card">
+            <div class="explorer-header">
+                <div class="breadcrumbs" id="breadcrumbs">
+                    <span class="breadcrumb-item active" onclick="navigateTo('/')">Root</span>
+                </div>
+            </div>
+            <table class="file-list">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th style="text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="file-tbody">
+                    <!-- Loaded dynamically -->
+                </tbody>
+            </table>
+            <div class="empty-state" id="empty-state" style="display: none;">
+                This folder is empty.
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        Powered by Laplace Archive Manager
+    </footer>
+
+    <script>
+        let currentPath = '/';
+
+        async function loadPath(path) {
+            currentPath = path;
+            updateBreadcrumbs();
+            
+            try {
+                const response = await fetch(`/api/list?path=${encodeURIComponent(path)}`);
+                const items = await response.json();
+                
+                const tbody = document.getElementById('file-tbody');
+                const emptyState = document.getElementById('empty-state');
+                
+                tbody.innerHTML = '';
+                
+                if (items.error) {
+                    tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #ef4444; padding: 40px;">${items.error}</td></tr>`;
+                    emptyState.style.display = 'none';
+                    return;
+                }
+
+                if (items.length === 0) {
+                    emptyState.style.display = 'block';
+                } else {
+                    emptyState.style.display = 'none';
+                    
+                    items.sort((a, b) => b.isDirectory - a.isDirectory || a.name.localeCompare(b.name));
+
+                    items.forEach(item => {
+                        const row = document.createElement('tr');
+                        row.className = 'file-row';
+                        
+                        const nameCell = document.createElement('td');
+                        nameCell.className = 'file-name-cell';
+                        
+                        const iconSpan = document.createElement('span');
+                        iconSpan.className = 'icon ' + (item.isDirectory ? 'folder-icon' : 'file-icon');
+                        iconSpan.innerText = item.isDirectory ? '📁' : '📄';
+                        
+                        const nameText = document.createElement('span');
+                        nameText.innerText = item.name;
+                        
+                        nameCell.appendChild(iconSpan);
+                        nameCell.appendChild(nameText);
+                        
+                        const sizeCell = document.createElement('td');
+                        sizeCell.className = 'size-cell';
+                        sizeCell.innerText = item.isDirectory ? '-' : formatBytes(item.size);
+                        
+                        const actionCell = document.createElement('td');
+                        actionCell.className = 'action-cell';
+                        
+                        if (item.isDirectory) {
+                            row.onclick = () => navigateTo(item.path);
+                        } else {
+                            const dlBtn = document.createElement('a');
+                            dlBtn.className = 'btn-download';
+                            dlBtn.innerText = 'Download';
+                            dlBtn.href = `/api/download?path=${encodeURIComponent(item.path)}`;
+                            row.onclick = (e) => {
+                                if (e.target !== dlBtn) {
+                                    window.location.href = dlBtn.href;
+                                }
+                            };
+                            actionCell.appendChild(dlBtn);
+                        }
+                        
+                        row.appendChild(nameCell);
+                        row.appendChild(sizeCell);
+                        row.appendChild(actionCell);
+                        tbody.appendChild(row);
+                    });
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        function navigateTo(path) {
+            loadPath(path);
+        }
+
+        function updateBreadcrumbs() {
+            const container = document.getElementById('breadcrumbs');
+            container.innerHTML = '';
+            
+            const rootSpan = document.createElement('span');
+            rootSpan.className = 'breadcrumb-item' + (currentPath === '/' ? ' active' : '');
+            rootSpan.innerText = 'Root';
+            rootSpan.onclick = () => navigateTo('/');
+            container.appendChild(rootSpan);
+            
+            if (currentPath !== '/') {
+                const parts = currentPath.split('/').filter(p => p);
+                let accumulated = '';
+                
+                parts.forEach((part, index) => {
+                    accumulated += '/' + part;
+                    
+                    const separator = document.createElement('span');
+                    separator.className = 'breadcrumb-separator';
+                    separator.innerText = ' / ';
+                    container.appendChild(separator);
+                    
+                    const span = document.createElement('span');
+                    span.className = 'breadcrumb-item' + (index === parts.length - 1 ? ' active' : '');
+                    span.innerText = part;
+                    if (index < parts.length - 1) {
+                        const target = accumulated;
+                        span.onclick = () => navigateTo(target);
+                    }
+                    container.appendChild(span);
+                });
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        async function shutdownServer() {
+            if (confirm('Are you sure you want to stop hosting and close the server?')) {
+                try {
+                    await fetch('/api/shutdown', { method: 'POST' });
+                    document.body.innerHTML = `
+                        <div style="text-align: center; padding: 100px 40px; font-family: 'Outfit', sans-serif;">
+                            <h2 style="font-size: 28px; margin-bottom: 16px;">Server Stopped</h2>
+                            <p style="color: var(--text-secondary);">The Laplace hosting server has been shut down cleanly. You can close this window.</p>
+                        </div>
+                    `;
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+        }
+
+        navigateTo('/');
+    </script>
+</body>
+</html>
+""";
     }
 }

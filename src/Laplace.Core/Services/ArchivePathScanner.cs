@@ -4,7 +4,10 @@ namespace Laplace.Core.Services;
 
 internal static class ArchivePathScanner
 {
-    public static List<InputEntry> Scan(IEnumerable<string> inputPaths)
+    public static List<InputEntry> Scan(
+        IEnumerable<string> inputPaths,
+        IReadOnlyList<string>? includePatterns = null,
+        IReadOnlyList<string>? excludePatterns = null)
     {
         var result = new List<InputEntry>();
         foreach (var inputPath in inputPaths)
@@ -32,6 +35,7 @@ internal static class ArchivePathScanner
             throw new FileNotFoundException($"Input path does not exist: {inputPath}");
         }
 
+        result = GlobFilter.Apply(result, includePatterns, excludePatterns);
         return result;
     }
 

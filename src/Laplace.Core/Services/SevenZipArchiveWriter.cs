@@ -19,7 +19,7 @@ public sealed class SevenZipArchiveWriter
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var scanned = ArchivePathScanner.Scan(inputPaths)
+        var scanned = ArchivePathScanner.Scan(inputPaths, options.IncludePatterns, options.ExcludePatterns)
             .OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (scanned.Count == 0)

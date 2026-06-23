@@ -50,13 +50,8 @@ The files below explain most of the project surface:
 - versioned Argon2id/PBKDF2 key derivation through LPCv5
 - authenticated metadata encryption through LPCv6
 - Reed-Solomon recovery records through LPCv7
-
-Reserved but not implemented:
-
-- multi-volume archives
-- SFX output
-
-Do not describe those as implemented unless the code changes.
+- multi-volume archives (.lpc.001, .lpc.002, etc.)
+- SFX output (.exe)
 
 ### Compression
 
@@ -163,11 +158,8 @@ Completed format-level backlog after native LPC solid layout:
 - [x] Metadata encryption for LPC file and block tables
 - [x] Multi-threaded solid block compression on top of the LPCv4 solid layout
 - [x] Recovery records and Reed-Solomon repair data
-
-Remaining reserved format work:
-
-- [ ] Multi-volume LPC output
-- [ ] SFX output
+- [x] Multi-volume LPC output
+- [x] SFX output
 
 ## Change Rules
 
@@ -190,8 +182,6 @@ Do not claim:
 - Laplace is generally better than RAR or 7-Zip without a benchmark
 - `ZPAQ` or `BSC` are built in
 - CAB has a native first-class writer
-- multi-volume LPC is implemented
-- SFX LPC output is implemented
 
 If a change touches release packaging, verify the release script and installer/MSIX paths as well.
 

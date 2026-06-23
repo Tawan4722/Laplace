@@ -19,7 +19,7 @@ public sealed class RarArchiveWriter
         var executable = FindRarExecutable()
             ?? throw new NotSupportedException("RAR creation requires WinRAR/RAR command-line tools. Install WinRAR so rar.exe or WinRAR.exe is available, or create a .7z, .zip, or .lpc archive instead.");
 
-        var scanned = ArchivePathScanner.Scan(inputPaths)
+        var scanned = ArchivePathScanner.Scan(inputPaths, options.IncludePatterns, options.ExcludePatterns)
             .OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (scanned.Count == 0)

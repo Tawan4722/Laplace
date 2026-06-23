@@ -7,7 +7,7 @@ using System.Text;
 
 namespace Laplace.Core.Services;
 
-internal static class ArchiveEncryption
+public static class ArchiveEncryption
 {
     public const int MinimumSaltSizeBytes = 16;
     public const int GeneratedSaltSizeBytes = 32;
@@ -188,4 +188,4 @@ internal static class ArchiveEncryption
     }
 }
 
-internal sealed record EncryptedPayload(byte[] Ciphertext, byte[] Nonce, byte[] Tag);
+public sealed record EncryptedPayload(byte[] Ciphertext, byte[] Nonce, byte[] Tag);

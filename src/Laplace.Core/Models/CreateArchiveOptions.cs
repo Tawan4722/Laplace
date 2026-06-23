@@ -40,4 +40,12 @@ public sealed class CreateArchiveOptions
     internal bool ZstdLongDistanceMatching { get; set; }
     internal bool ZstdForceLongDistanceTrial { get; set; }
     internal long? TotalInputSizeBytes { get; set; }
+    public IReadOnlyList<string>? IncludePatterns { get; set; }
+    public IReadOnlyList<string>? ExcludePatterns { get; set; }
+
+    public bool Deduplicate { get; set; }
+    public bool UseCdc { get; set; }
+    public int MinChunkSize { get; set; } = 8192;
+    public int AvgChunkSize { get; set; } = 32768;
+    public int MaxChunkSize { get; set; } = 262144;
 }

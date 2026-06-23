@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using Laplace.Core.Services;
 using Xunit;
 
 namespace Laplace.Tests;
@@ -725,4 +728,83 @@ public sealed class CliBlackBoxTests
     }
 
     private sealed record CliResult(int ExitCode, string StandardOutput, string StandardError);
+
+    [Fact]
+    public async Task Compress_WithExcludeFilter_WorkThroughCli()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "hello");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "b.log"), "world");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            var compress = await RunLaplaceAsync("compress", sourceDir, archivePath, "--exclude", "*.log", "--no-verify");
+            AssertSuccess(compress);
+
+            var extract = await RunLaplaceAsync("extract", archivePath, extractPath, "--overwrite");
+            AssertSuccess(extract);
+
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "a.txt")));
+            Assert.False(File.Exists(Path.Combine(extractPath, "src", "b.log")));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task Extract_ContinueOnError_WorkThroughCli()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "aaaa");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "b.txt"), "bbbb");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            AssertSuccess(await RunLaplaceAsync("compress", sourceDir, archivePath, "--mode", "balanced", "--solid", "off", "--no-verify"));
+
+            var archive = new ArchiveReader().Read(archivePath);
+            var bRecord = archive.FileEntries.First(x => x.RelativePath.EndsWith("b.txt"));
+            var bBlock = archive.BlockEntries[(int)bRecord.FirstBlockIndex];
+
+            using (var fs = new FileStream(archivePath, FileMode.Open, FileAccess.ReadWrite))
+            {
+                fs.Position = bBlock.DataOffset + 2;
+                fs.WriteByte(0xFF);
+            }
+
+            var extract = await RunLaplaceAsync("extract", archivePath, extractPath, "--continue-on-error", "--overwrite");
+            Assert.Equal(3, extract.ExitCode);
+            Assert.Contains("Extracted 1 files successfully. 1 files failed.", extract.StandardOutput);
+            Assert.Contains("b.txt", extract.StandardOutput);
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "a.txt")));
+
+            var extractJson = await RunLaplaceAsync("extract", archivePath, extractPath, "--continue-on-error", "--overwrite", "--json");
+            Assert.Equal(3, extractJson.ExitCode);
+            using (var doc = ParseJsonOutput(extractJson.StandardOutput))
+            {
+                Assert.True(doc.RootElement.GetProperty("hasErrors").GetBoolean());
+                Assert.Equal(1, doc.RootElement.GetProperty("succeededFiles").GetInt32());
+                Assert.Equal(1, doc.RootElement.GetProperty("failedFiles").GetInt32());
+                var errorsArray = doc.RootElement.GetProperty("errors").EnumerateArray().ToArray();
+                Assert.Single(errorsArray);
+                Assert.Contains("b.txt", errorsArray[0].GetProperty("relativePath").GetString());
+            }
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
 }

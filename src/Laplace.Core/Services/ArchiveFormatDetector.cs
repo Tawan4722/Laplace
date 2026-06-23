@@ -14,8 +14,20 @@ public enum SupportedArchiveKind
 
 public static class ArchiveFormatDetector
 {
+    public static bool IsUrl(string path)
+    {
+        return path != null &&
+               (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+    }
+
     public static SupportedArchiveKind DetectReadKind(string archivePath)
     {
+        if (IsUrl(archivePath))
+        {
+            return SupportedArchiveKind.Lpc;
+        }
+
         var resolvedPath = archivePath;
         if (!File.Exists(resolvedPath))
         {
@@ -24,6 +36,7 @@ public static class ArchiveFormatDetector
                 resolvedPath = firstVolPath;
             }
         }
+
 
         if (LooksLikeLpc(resolvedPath) || LpcSfxHelper.IsSfxFile(resolvedPath))
         {

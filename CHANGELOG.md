@@ -4,6 +4,13 @@ All notable changes to Laplace will be documented here.
 
 ## Unreleased
 
+- Added Cloud Streaming & Selective Remote Extraction over HTTP/HTTPS range requests (using a seekable, cached `HttpRangeStream`).
+- Added Content-Defined Chunking (FastCDC) and Block-Level Deduplication via `--dedup` / `--cdc` options for non-solid archives.
+- Added Single-Use Temporary Web Share hosting via `laplace host <archive>` with a premium, glassmorphic dark-mode web dashboard.
+- Added repeatable `--include <glob>` and `--exclude <glob>` glob filters to `compress`, `compress-beside`, and `estimate` commands.
+- Added `--continue-on-error` option to `extract`, `extract-here`, `extract-to-folder`, and `extract-to-named-folder` commands.
+- Documented process exit code `3` for partial success during extraction.
+
 ## 2.2.0 - 2026-06-21
 
 - Added native LPC multi-volume archive output (`.lpc.001`, `.lpc.002`, etc.) through `--volume-size` and desktop volume presets.

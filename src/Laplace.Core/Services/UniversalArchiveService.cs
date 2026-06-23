@@ -74,7 +74,7 @@ public sealed class UniversalArchiveService
         }
     }
 
-    public async Task ExtractAsync(
+    public async Task<ExtractResult> ExtractAsync(
         string archivePath,
         string destinationFolder,
         ExtractArchiveOptions options,
@@ -84,14 +84,13 @@ public sealed class UniversalArchiveService
         switch (ArchiveFormatDetector.DetectReadKind(archivePath))
         {
             case SupportedArchiveKind.Lpc:
-                await _lpcExtractor.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
-                return;
+                return await _lpcExtractor.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
             case SupportedArchiveKind.Zip:
                 await _zipHandler.ExtractAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
-                return;
+                return new ExtractResult();
             default:
                 await ExtractExternalAsync(archivePath, destinationFolder, options, progress, cancellationToken).ConfigureAwait(false);
-                return;
+                return new ExtractResult();
         }
     }
 

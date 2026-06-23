@@ -27,7 +27,7 @@ public sealed class ArchiveEstimator
         IProgress<ArchiveOperationProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var scanned = ArchivePathScanner.Scan(inputPaths);
+        var scanned = ArchivePathScanner.Scan(inputPaths, options.IncludePatterns, options.ExcludePatterns);
         if (scanned.Count == 0)
         {
             throw new InvalidOperationException("No input files or folders were found.");

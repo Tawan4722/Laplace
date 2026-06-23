@@ -1557,9 +1557,11 @@ public sealed class ArchiveRoundTripTests
     {
         var baseDir = AppContext.BaseDirectory;
         var dummyGuiPath = Path.Combine(baseDir, "laplace-gui.exe");
+        var dummyStubPath = Path.Combine(baseDir, "laplace-sfx-stub.exe");
         var dummyGuiBytes = new byte[1024];
         new Random(42).NextBytes(dummyGuiBytes);
         await File.WriteAllBytesAsync(dummyGuiPath, dummyGuiBytes);
+        await File.WriteAllBytesAsync(dummyStubPath, dummyGuiBytes);
 
         var root = CreateTempFolder();
         try
@@ -1616,6 +1618,7 @@ public sealed class ArchiveRoundTripTests
         finally
         {
             try { File.Delete(dummyGuiPath); } catch {}
+            try { File.Delete(dummyStubPath); } catch {}
             try { Directory.Delete(root, recursive: true); } catch {}
         }
     }
@@ -1840,6 +1843,396 @@ public sealed class ArchiveRoundTripTests
                 Assert.Equal(26, read);
                 Assert.Equal("abcdefghijklmnopqrstuvwxyz", Encoding.UTF8.GetString(buffer));
             }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Compress_WithIncludeFilter_OnlyMatchingFilesArchived()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "hello");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "b.log"), "world");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "c.txt"), "hello2");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                IncludePatterns = ["*.txt"]
+            });
+
+            await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "a.txt")));
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "c.txt")));
+            Assert.False(File.Exists(Path.Combine(extractPath, "src", "b.log")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Compress_WithExcludeFilter_MatchingFilesOmitted()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "hello");
+            var gitDir = Path.Combine(sourceDir, ".git");
+            Directory.CreateDirectory(gitDir);
+            await File.WriteAllTextAsync(Path.Combine(gitDir, "config"), "config");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                ExcludePatterns = [".git/**"]
+            });
+
+            await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "a.txt")));
+            Assert.False(Directory.Exists(Path.Combine(extractPath, "src", ".git")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Compress_WithCombinedFilters_FiltersCorrectSubset()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "hello");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "b.log"), "world");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "c.txt"), "hello2");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                IncludePatterns = ["*.txt", "*.log"],
+                ExcludePatterns = ["*.log"]
+            });
+
+            await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true });
+
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "a.txt")));
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "c.txt")));
+            Assert.False(File.Exists(Path.Combine(extractPath, "src", "b.log")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Compress_AllFilesExcluded_ThrowsInvalidOperationException()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "hello");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                ExcludePatterns = ["*"]
+            }));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Extract_ContinueOnError_NonSolid_SavesValidFilesAndReportsErrors()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "aaaa");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "b.txt"), "bbbb");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "c.txt"), "cccc");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                SolidMode = SolidMode.Off
+            });
+
+            var archive = new ArchiveReader().Read(archivePath);
+            var bRecord = archive.FileEntries.First(x => x.RelativePath.EndsWith("b.txt"));
+            var bBlock = archive.BlockEntries[(int)bRecord.FirstBlockIndex];
+
+            using (var fs = new FileStream(archivePath, FileMode.Open, FileAccess.ReadWrite))
+            {
+                fs.Position = bBlock.DataOffset + 2;
+                fs.WriteByte(0xFF);
+            }
+
+            var extractResult = await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+            {
+                Overwrite = true,
+                ContinueOnError = true
+            });
+
+            Assert.True(extractResult.HasErrors);
+            Assert.Equal(2, extractResult.SucceededFiles);
+            Assert.Equal(1, extractResult.FailedFiles);
+            Assert.Contains(extractResult.Errors, e => e.RelativePath.EndsWith("b.txt"));
+
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "a.txt")));
+            Assert.True(File.Exists(Path.Combine(extractPath, "src", "c.txt")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Extract_ContinueOnError_Solid_ReportsFatalDecompressionErrorAndSavesPriorFiles()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceDir = Path.Combine(root, "src");
+            Directory.CreateDirectory(sourceDir);
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "a.txt"), "aaaa");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "b.txt"), "bbbb");
+            await File.WriteAllTextAsync(Path.Combine(sourceDir, "c.txt"), "cccc");
+
+            var archivePath = Path.Combine(root, "archive.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            var service = new UniversalArchiveService(new CompressorRegistry());
+            await service.CompressAsync([sourceDir], archivePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                SolidMode = SolidMode.On,
+                BlockSizeBytes = 1024 * 1024
+            });
+
+            var archive = new ArchiveReader().Read(archivePath);
+            var block = archive.BlockEntries[0];
+
+            using (var fs = new FileStream(archivePath, FileMode.Open, FileAccess.ReadWrite))
+            {
+                fs.Position = block.DataOffset + 10;
+                fs.WriteByte(0xAA);
+            }
+
+            var extractResult = await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+            {
+                Overwrite = true,
+                ContinueOnError = true
+            });
+
+            Assert.True(extractResult.HasErrors);
+            Assert.Contains(extractResult.Errors, e => e.Reason.Contains("Fatal solid decompression error"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Compress_WithDeduplicateAndCdc_DeduplicatesBlocksAndExtractsCorrectly()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var file1 = Path.Combine(root, "file1.txt");
+            var file2 = Path.Combine(root, "file2.txt");
+
+            var content = string.Join(Environment.NewLine, Enumerable.Repeat("Laplace deduplication test content", 500));
+            await File.WriteAllTextAsync(file1, content);
+            await File.WriteAllTextAsync(file2, content);
+
+            var archivePath = Path.Combine(root, "dedup.lpc");
+            var extractPath = Path.Combine(root, "out");
+
+            var registry = new CompressorRegistry();
+            var writer = new ArchiveWriter(registry);
+            
+            var options = new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                SolidMode = SolidMode.Off,
+                Deduplicate = true,
+                UseCdc = true,
+                MinChunkSize = 1024,
+                AvgChunkSize = 4096,
+                MaxChunkSize = 16384,
+                VerifyAfterCompression = false
+            };
+
+            await writer.CreateAsync([file1, file2], archivePath, options);
+
+            var reader = new ArchiveReader();
+            var archive = reader.Read(archivePath);
+
+            var distinctOffsets = archive.BlockEntries.Select(b => b.DataOffset).Distinct().Count();
+            Assert.True(archive.BlockEntries.Count > distinctOffsets, "Blocks should share DataOffset due to deduplication.");
+
+            var extractor = new ArchiveExtractor(registry);
+            await extractor.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions
+            {
+                Overwrite = true,
+                VerifyChecksums = true
+            });
+
+            Assert.Equal(content, await File.ReadAllTextAsync(Path.Combine(extractPath, "file1.txt")));
+            Assert.Equal(content, await File.ReadAllTextAsync(Path.Combine(extractPath, "file2.txt")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CloudStreaming_ExtractsFromRemoteUrlViaHttpRangeStream()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "sample.txt");
+            var content = "Cloud streaming test data block. " + string.Join(" ", Enumerable.Repeat("some text", 200));
+            await File.WriteAllTextAsync(sourceFile, content);
+
+            var archivePath = Path.Combine(root, "remote.lpc");
+            var registry = new CompressorRegistry();
+            var writer = new ArchiveWriter(registry);
+
+            await writer.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+            {
+                Mode = CompressionMode.Balanced,
+                BlockSizeBytes = 64 * 1024
+            });
+
+            int port = 9090;
+            using var listener = new System.Net.HttpListener();
+            bool bound = false;
+            while (!bound && port < 9200)
+            {
+                try
+                {
+                    listener.Prefixes.Clear();
+                    listener.Prefixes.Add($"http://localhost:{port}/");
+                    listener.Start();
+                    bound = true;
+                }
+                catch
+                {
+                    port++;
+                }
+            }
+
+            if (!bound) return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (listener.IsListening)
+                    {
+                        var context = await listener.GetContextAsync();
+                        var req = context.Request;
+                        var resp = context.Response;
+
+                        var fileBytes = File.ReadAllBytes(archivePath);
+
+                        if (req.HttpMethod.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+                        {
+                            resp.ContentLength64 = fileBytes.Length;
+                            resp.Close();
+                            continue;
+                        }
+
+                        if (req.Headers["Range"] != null)
+                        {
+                            var rangeHeader = req.Headers["Range"]!;
+                            var rangeValue = rangeHeader.Substring("bytes=".Length);
+                            var parts = rangeValue.Split('-');
+                            long start = long.Parse(parts[0]);
+                            long end = parts.Length > 1 && !string.IsNullOrEmpty(parts[1]) ? long.Parse(parts[1]) : fileBytes.Length - 1;
+
+                            long length = end - start + 1;
+                            resp.StatusCode = 206;
+                            resp.Headers.Add("Content-Range", $"bytes {start}-{end}/{fileBytes.Length}");
+                            resp.ContentLength64 = length;
+
+                            await resp.OutputStream.WriteAsync(fileBytes, (int)start, (int)length);
+                        }
+                        else
+                        {
+                            resp.ContentLength64 = fileBytes.Length;
+                            await resp.OutputStream.WriteAsync(fileBytes, 0, fileBytes.Length);
+                        }
+                        resp.Close();
+                    }
+                }
+                catch { }
+            });
+
+            var url = $"http://localhost:{port}/remote.lpc";
+
+            var reader = new ArchiveReader();
+            var entries = reader.ListEntries(url);
+            Assert.Single(entries);
+            Assert.Equal("sample.txt", entries[0].RelativePath);
+
+            var extractPath = Path.Combine(root, "extracted_remote");
+            var extractor = new ArchiveExtractor(registry);
+            await extractor.ExtractAsync(url, extractPath, new ExtractArchiveOptions
+            {
+                Overwrite = true
+            });
+
+            Assert.Equal(content, await File.ReadAllTextAsync(Path.Combine(extractPath, "sample.txt")));
+            listener.Stop();
         }
         finally
         {
