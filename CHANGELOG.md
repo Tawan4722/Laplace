@@ -2,7 +2,10 @@
 
 All notable changes to Laplace will be documented here.
 
-## Unreleased
+## 2.2.3 - 2026-06-23
+
+- Isolated `Laplace.SfxStub` project from the main `Laplace.sln` solution file to resolve CI build/restore platform inference errors in clean runner environments.
+- Maintained standalone Native AOT compilation and publish pipeline for `Laplace.SfxStub` during setup and packaging tasks.
 
 ## 2.2.2 - 2026-06-23
 

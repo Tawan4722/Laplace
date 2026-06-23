@@ -176,6 +176,18 @@ Invoke-NativeCommand "dotnet publish Laplace.Desktop" {
         -o $publishDir
 }
 
+$stubSrc = Join-Path $repoRoot "src\Laplace.SfxStub\bin\$Configuration\net8.0-windows\win-x64\publish\laplace-sfx-stub.exe"
+if (-not (Test-Path $stubSrc)) {
+    Write-Host "==> Publishing Native AOT SFX stub..."
+    Invoke-NativeCommand "dotnet publish SfxStub" {
+        & $dotnet publish (Join-Path $repoRoot "src\Laplace.SfxStub\Laplace.SfxStub.csproj") `
+            -c $Configuration `
+            -r win-x64 `
+            --self-contained
+    }
+}
+Copy-Item -Path $stubSrc -Destination (Join-Path $publishDir "laplace-sfx-stub.exe") -Force
+
 Write-Host "==> Preparing MSIX staging directory..."
 if (Test-Path $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force }
 Ensure-Dir $stageDir

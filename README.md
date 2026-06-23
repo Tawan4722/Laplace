@@ -502,6 +502,14 @@ Laplace is modularly built around a set of core C# services. Below is a comprehe
 
 ---
 
+### 4. Laplace.SfxStub Assembly (`Laplace.SfxStub` Namespace)
+
+*   **`Program`** ([Program.cs](file:///e:/Laplace/src/Laplace.SfxStub/Program.cs))
+    *   `Task<int> Main(string[] args)`: The main entry point of the self-extracting archive (SFX) stub executable. It parses output directory options, checks for encryption, prompts for password input if needed, and initiates extraction.
+    *   `string ReadPassword()`: Helper method to securely read character input from the console without echoing.
+
+---
+
 ## Explorer Integration
 
 Manage per-user integration with:

@@ -89,6 +89,28 @@ if (-not $SkipBuild) {
     Invoke-Checked -Label "dotnet build" -Action {
         & $dotnet build ".\Laplace.sln" -c $Configuration --no-restore
     }
+
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        Write-Host "==> Publishing Native AOT SFX stub..."
+        Invoke-Checked -Label "dotnet publish SfxStub" -Action {
+            & $dotnet publish (Join-Path $repoRoot "src\Laplace.SfxStub\Laplace.SfxStub.csproj") `
+                -c $Configuration `
+                -r win-x64 `
+                --self-contained
+        }
+
+        $stubSrc = Join-Path $repoRoot "src\Laplace.SfxStub\bin\$Configuration\net8.0-windows\win-x64\publish\laplace-sfx-stub.exe"
+        $cliDest = Join-Path $repoRoot "src\Laplace.Cli\bin\$Configuration\net8.0-windows\laplace-sfx-stub.exe"
+        $desktopDest = Join-Path $repoRoot "src\Laplace.Desktop\bin\$Configuration\net8.0-windows\laplace-sfx-stub.exe"
+
+        $cliDestDir = Split-Path -Parent $cliDest
+        $desktopDestDir = Split-Path -Parent $desktopDest
+        if (-not (Test-Path $cliDestDir)) { New-Item -ItemType Directory -Path $cliDestDir -Force | Out-Null }
+        if (-not (Test-Path $desktopDestDir)) { New-Item -ItemType Directory -Path $desktopDestDir -Force | Out-Null }
+
+        Copy-Item -Path $stubSrc -Destination $cliDest -Force
+        Copy-Item -Path $stubSrc -Destination $desktopDest -Force
+    }
 }
 else {
     Write-Host "==> Build skipped"
