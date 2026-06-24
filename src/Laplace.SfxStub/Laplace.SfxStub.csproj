@@ -6,7 +6,7 @@
     <XeWin10TargetVersion>7.0</XeWin10TargetVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PublishAot>true</PublishAot>
+    <PublishAot Condition="'$(RuntimeIdentifier)' != ''">true</PublishAot>
     <OptimizationPreference>Size</OptimizationPreference>
     <StripSymbols>true</StripSymbols>
     <RootNamespace>Laplace.SfxStub</RootNamespace>

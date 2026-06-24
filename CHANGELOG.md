@@ -2,6 +2,13 @@
 
 All notable changes to Laplace will be documented here.
 
+## 2.2.4 - 2026-06-24
+
+- Reintegrated `Laplace.SfxStub` back into the main `Laplace.sln` solution file.
+- Configured solution configuration platforms for `Laplace.SfxStub` to skip automatic building.
+- Conditionalized Native AOT compilation in `Laplace.SfxStub.csproj` to prevent MSBuild platform inference errors during solution-wide restores and builds.
+- Cleaned up the repository workspace by removing empty, untracked directories.
+
 ## 2.2.3 - 2026-06-23
 
 - Isolated `Laplace.SfxStub` project from the main `Laplace.sln` solution file to resolve CI build/restore platform inference errors in clean runner environments.
