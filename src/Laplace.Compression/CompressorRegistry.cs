@@ -4,7 +4,7 @@ using Laplace.Core.Enums;
 
 namespace Laplace.Compression;
 
-public sealed class CompressorRegistry : ICompressorRegistry, IConfigurableCompressorRegistry
+public sealed class CompressorRegistry : ICompressorRegistry
 {
     private readonly Dictionary<CompressionMethod, IBlockCompressor> _compressors;
 

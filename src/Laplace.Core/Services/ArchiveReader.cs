@@ -85,11 +85,6 @@ public sealed class ArchiveReader
         };
     }
 
-    public IReadOnlyList<FileEntryRecord> ListEntries(string archivePath, PasswordContext? password = null)
-    {
-        return Read(archivePath, password).FileEntries;
-    }
-
     public ArchiveHeader ReadHeaderOnly(string archivePath)
     {
         using var stream = LpcSfxHelper.OpenArchiveStream(archivePath);

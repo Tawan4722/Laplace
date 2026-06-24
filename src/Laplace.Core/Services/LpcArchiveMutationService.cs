@@ -157,7 +157,7 @@ public sealed class LpcArchiveMutationService
             cancellationToken: cancellationToken);
     }
 
-    public IReadOnlyList<ArchiveFindResult> Find(string archivePath, ArchiveFindOptions options)
+    public async Task<IReadOnlyList<ArchiveFindResult>> FindAsync(string archivePath, ArchiveFindOptions options, CancellationToken cancellationToken = default)
     {
         var archive = _reader.Read(archivePath, options.Password);
         var regex = GlobToRegex(string.IsNullOrWhiteSpace(options.NamePattern) ? "*" : options.NamePattern);
@@ -181,11 +181,11 @@ public sealed class LpcArchiveMutationService
         var tempRoot = CreateTempRoot();
         try
         {
-            new ArchiveExtractor(_compressorRegistry, _reader).ExtractAsync(
+            await new ArchiveExtractor(_compressorRegistry, _reader).ExtractAsync(
                 archivePath,
                 tempRoot,
                 new ExtractArchiveOptions { Overwrite = true, Password = options.Password },
-                cancellationToken: CancellationToken.None).GetAwaiter().GetResult();
+                cancellationToken: cancellationToken).ConfigureAwait(false);
 
             var byPath = nameMatches.ToDictionary(x => x.Path, StringComparer.OrdinalIgnoreCase);
             foreach (var entry in archive.FileEntries.Where(x => !x.IsDirectory))
@@ -196,7 +196,19 @@ public sealed class LpcArchiveMutationService
                     continue;
                 }
 
-                var textMatched = File.ReadLines(filePath).Any(line => line.Contains(options.Text, StringComparison.OrdinalIgnoreCase));
+                var textMatched = false;
+                using (var reader = new StreamReader(filePath))
+                {
+                    while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+                    {
+                        if (line.Contains(options.Text, StringComparison.OrdinalIgnoreCase))
+                        {
+                            textMatched = true;
+                            break;
+                        }
+                    }
+                }
+
                 if (!textMatched)
                 {
                     continue;
@@ -235,7 +247,7 @@ public sealed class LpcArchiveMutationService
         }
     }
 
-    public byte[] ViewFile(string archivePath, string target, PasswordContext? password)
+    public async Task<byte[]> ViewFileAsync(string archivePath, string target, PasswordContext? password, CancellationToken cancellationToken = default)
     {
         var archive = _reader.Read(archivePath, password);
         var relativePath = ResolveSingleTarget(archive, target);
@@ -248,13 +260,13 @@ public sealed class LpcArchiveMutationService
         var tempRoot = CreateTempRoot();
         try
         {
-            new ArchiveExtractor(_compressorRegistry, _reader).ExtractAsync(
+            await new ArchiveExtractor(_compressorRegistry, _reader).ExtractAsync(
                 archivePath,
                 tempRoot,
                 new ExtractArchiveOptions { Overwrite = true, Password = password, SelectedEntryIds = new HashSet<long> { entry.EntryId } },
-                cancellationToken: CancellationToken.None).GetAwaiter().GetResult();
+                cancellationToken: cancellationToken).ConfigureAwait(false);
             var filePath = PathSecurity.EnsureSafeExtractionPath(tempRoot, relativePath);
-            return File.ReadAllBytes(filePath);
+            return await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

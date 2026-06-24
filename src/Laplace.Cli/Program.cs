@@ -1091,12 +1091,12 @@ internal static class Program
             "Find archive entries",
             passwordOptions,
             password,
-            resolvedPassword => Task.FromResult(mutator.Find(archivePath, new ArchiveFindOptions
+            async resolvedPassword => await mutator.FindAsync(archivePath, new ArchiveFindOptions
             {
                 NamePattern = name,
                 Text = text,
                 Password = resolvedPassword
-            }))).ConfigureAwait(false);
+            }).ConfigureAwait(false)).ConfigureAwait(false);
         if (json)
         {
             WriteJson(new
@@ -1502,7 +1502,7 @@ internal static class Program
             "View archive entry",
             passwordOptions,
             password,
-            resolvedPassword => Task.FromResult(mutator.ViewFile(archivePath, args[1], resolvedPassword))).ConfigureAwait(false);
+            async resolvedPassword => await mutator.ViewFileAsync(archivePath, args[1], resolvedPassword).ConfigureAwait(false)).ConfigureAwait(false);
         await Console.OpenStandardOutput().WriteAsync(bytes).ConfigureAwait(false);
         return 0;
     }

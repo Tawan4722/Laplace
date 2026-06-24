@@ -40,13 +40,4 @@ internal static class BinaryCodec
         return ChecksumService.ComputeCrc32C(headerWithoutChecksum);
     }
 
-    public static long ToUnixMilliseconds(DateTimeOffset value) => value.ToUnixTimeMilliseconds();
-    public static DateTimeOffset FromUnixMilliseconds(long value) => DateTimeOffset.FromUnixTimeMilliseconds(value);
-
-    public static byte[] UInt32ToLittleEndianBytes(uint value)
-    {
-        Span<byte> bytes = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
-        return bytes.ToArray();
-    }
 }

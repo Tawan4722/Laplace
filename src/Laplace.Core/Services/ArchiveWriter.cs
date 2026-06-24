@@ -943,16 +943,14 @@ public sealed class ArchiveWriter
     private IBlockCompressor GetCompressorForCompression(CompressionMethod method, CreateArchiveOptions options)
     {
         if (method == CompressionMethod.LzmaMax &&
-            options.LzmaDictionarySizeBytes is { } dictionarySize &&
-            _compressorRegistry is IConfigurableCompressorRegistry configurableRegistry)
+            options.LzmaDictionarySizeBytes is { } dictionarySize)
         {
-            return configurableRegistry.GetLzmaCompressor(dictionarySize, options.LzmaFastBytes);
+            return _compressorRegistry.GetLzmaCompressor(dictionarySize, options.LzmaFastBytes);
         }
         if (method == CompressionMethod.ZstdHigh &&
-            options.ZstdWindowLog is { } windowLog &&
-            _compressorRegistry is IConfigurableCompressorRegistry configurableZstdRegistry)
+            options.ZstdWindowLog is { } windowLog)
         {
-            return configurableZstdRegistry.GetZstdCompressor(
+            return _compressorRegistry.GetZstdCompressor(
                 method,
                 level: options.ZstdLevel,
                 windowLog: windowLog,
@@ -1038,11 +1036,10 @@ public sealed class ArchiveWriter
     private IBlockCompressor GetCompressorForSampling(CompressionMethod method, CreateArchiveOptions options)
     {
         if (method == CompressionMethod.LzmaMax &&
-            options.Mode == CompressionMode.Extreme &&
-            _compressorRegistry is IConfigurableCompressorRegistry configurableRegistry)
+            options.Mode == CompressionMode.Extreme)
         {
             var sampleDictionarySize = Math.Min(options.LzmaDictionarySizeBytes ?? 4 * 1024 * 1024, 4 * 1024 * 1024);
-            return configurableRegistry.GetLzmaCompressor(sampleDictionarySize, Math.Min(options.LzmaFastBytes, 128));
+            return _compressorRegistry.GetLzmaCompressor(sampleDictionarySize, Math.Min(options.LzmaFastBytes, 128));
         }
 
         return _compressorRegistry.GetCompressor(method);

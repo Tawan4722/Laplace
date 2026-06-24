@@ -1,5 +1,3 @@
-using System.IO.Enumeration;
-
 namespace Laplace.Core.Services;
 
 internal static class GlobFilter

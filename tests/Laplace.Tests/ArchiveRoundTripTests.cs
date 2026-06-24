@@ -70,7 +70,7 @@ public sealed class ArchiveRoundTripTests
         });
 
         var reader = new ArchiveReader();
-        var entries = reader.ListEntries(archivePath);
+        var entries = reader.Read(archivePath).FileEntries;
         Assert.Contains(entries, e => e.IsDirectory && e.RelativePath == "tiny");
         Assert.Equal(200, entries.Count(e => !e.IsDirectory));
     }
@@ -1637,6 +1637,12 @@ public sealed class ArchiveRoundTripTests
 
         public IBlockCompressor GetCompressor(CompressionMethod method)
             => method == CompressionMethod.Lz4Fast ? _tracking : _inner.GetCompressor(method);
+
+        public IBlockCompressor GetLzmaCompressor(int dictionarySizeBytes, int fastBytes)
+            => _inner.GetLzmaCompressor(dictionarySizeBytes, fastBytes);
+
+        public IBlockCompressor GetZstdCompressor(CompressionMethod method, int level, int windowLog, bool enableLongDistanceMatching)
+            => _inner.GetZstdCompressor(method, level, windowLog, enableLongDistanceMatching);
     }
 
     private sealed class TrackingCompressor : IBlockCompressor
@@ -1720,7 +1726,7 @@ public sealed class ArchiveRoundTripTests
 
         // 2. List entries using Volume 1 path
         var reader = new ArchiveReader();
-        var entries = reader.ListEntries(vol1);
+        var entries = reader.Read(vol1).FileEntries;
         Assert.Single(entries);
         Assert.Equal("large.bin", entries[0].RelativePath);
 
@@ -2220,7 +2226,7 @@ public sealed class ArchiveRoundTripTests
             var url = $"http://localhost:{port}/remote.lpc";
 
             var reader = new ArchiveReader();
-            var entries = reader.ListEntries(url);
+            var entries = reader.Read(url).FileEntries;
             Assert.Single(entries);
             Assert.Equal("sample.txt", entries[0].RelativePath);
 

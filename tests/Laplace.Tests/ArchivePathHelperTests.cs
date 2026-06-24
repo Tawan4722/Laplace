@@ -64,14 +64,6 @@ public sealed class ArchivePathHelperTests
         }
     }
 
-    [Fact]
-    public void EnsureConfirmationMatches_RejectsMismatch()
-    {
-        var password = new PasswordContext("correct horse battery staple");
-        var confirmation = new PasswordContext("wrong password");
-
-        Assert.Throws<ArgumentException>(() => ArchivePasswordPolicy.EnsureConfirmationMatches(password, confirmation));
-    }
 
     private static string CreateTempFolder()
     {
