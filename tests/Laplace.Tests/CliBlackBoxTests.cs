@@ -635,7 +635,12 @@ public sealed class CliBlackBoxTests
             CreateNoWindow = true
         };
 
-        var dllPath = Path.Combine(repoRoot, "src", "Laplace.Cli", "bin", "Debug", "net8.0-windows", "laplace.dll");
+#if DEBUG
+        var config = "Debug";
+#else
+        var config = "Release";
+#endif
+        var dllPath = Path.Combine(repoRoot, "src", "Laplace.Cli", "bin", config, "net8.0-windows", "laplace.dll");
         startInfo.ArgumentList.Add(dllPath);
         foreach (var argument in arguments)
         {
