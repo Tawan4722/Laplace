@@ -735,6 +735,51 @@ public sealed class ArchiveRoundTripTests
         Assert.EndsWith(Path.Combine("folder", "subfolder", "file.txt"), path);
     }
 
+    [Theory]
+    [InlineData("folder/file*.txt")]
+    [InlineData("folder/file?.txt")]
+    [InlineData("folder/file<>.txt")]
+    [InlineData("folder/file|pipe.txt")]
+    [InlineData("folder/file\"quote.txt")]
+    public void PathSecurity_BlocksInvalidFileNameCharacters(string unsafePath)
+    {
+        var destination = Path.Combine(Path.GetTempPath(), "laplace-security-test");
+        Assert.Throws<InvalidDataException>(() => PathSecurity.EnsureSafeExtractionPath(destination, unsafePath));
+    }
+
+    [Fact]
+    public void PathSecurity_EnsureNoReparsePointInPath_BlocksExistingReparsePointFile()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var root = CreateTempFolder();
+        try
+        {
+            var targetFile = Path.Combine(root, "target.txt");
+            var symlinkFile = Path.Combine(root, "symlink.txt");
+            File.WriteAllText(targetFile, "target content");
+
+            try
+            {
+                File.CreateSymbolicLink(symlinkFile, targetFile);
+            }
+            catch
+            {
+                // Skip the test if Developer Mode is disabled or system policy prevents symlink creation
+                return;
+            }
+
+            Assert.Throws<InvalidDataException>(() => PathSecurity.EnsureNoReparsePointInPath(root, symlinkFile));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Corruption_IsDetectedByTestCommandLogic()
     {

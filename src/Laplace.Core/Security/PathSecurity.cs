@@ -28,6 +28,11 @@ public static class PathSecurity
         "LPT9"
     };
 
+    private static readonly HashSet<char> WindowsInvalidFileNameChars = new()
+    {
+        '\\', '/', ':', '*', '?', '"', '<', '>', '|'
+    };
+
     public static string NormalizeArchivePath(string relativePath)
     {
         var normalized = relativePath.Replace('\\', '/').TrimStart('/');
@@ -64,6 +69,14 @@ public static class PathSecurity
         var fullRoot = Path.GetFullPath(destinationRoot)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var fullPath = Path.GetFullPath(fullDestinationPath);
+
+        // Check if the target itself is an existing reparse point/symlink
+        if ((File.Exists(fullPath) || Directory.Exists(fullPath)) &&
+            File.GetAttributes(fullPath).HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new InvalidDataException($"Extraction path target is a reparse point: {fullPath}");
+        }
+
         var current = Directory.Exists(fullPath) ? fullPath : Path.GetDirectoryName(fullPath);
 
         while (!string.IsNullOrWhiteSpace(current) &&
@@ -140,9 +153,9 @@ public static class PathSecurity
             throw new InvalidDataException($"Archive path segment has an unsafe Windows name: {originalPath}");
         }
 
-        if (segment.Contains(':', StringComparison.Ordinal))
+        if (segment.Any(c => WindowsInvalidFileNameChars.Contains(c)))
         {
-            throw new InvalidDataException($"Archive path segment contains an alternate stream or drive separator: {originalPath}");
+            throw new InvalidDataException($"Archive path segment contains invalid characters: {originalPath}");
         }
 
         var baseName = segment.Split('.')[0];
