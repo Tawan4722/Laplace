@@ -16,7 +16,7 @@ All offsets and sizes use 64-bit fields where relevant.
 | Field | Type | Notes |
 |---|---|---|
 | Magic | 4 bytes ASCII | `LPC1` |
-| FormatVersion | `UInt16` | highest required feature version, currently `1` through `7` |
+| FormatVersion | `UInt16` | unified format version, currently `8` |
 | ArchiveFlags | `UInt16` | bit `1` = encrypted payload blocks |
 | CreatedUnixMilliseconds | `Int64` | UTC timestamp |
 | CreatorVersion | `UInt32` | Laplace writer version |
@@ -27,18 +27,19 @@ All offsets and sizes use 64-bit fields where relevant.
 | BlockTableOffset | `Int64` | absolute stream offset |
 | DataSectionOffset | `Int64` | absolute stream offset |
 | Comment | UTF-8 string | length-prefixed `Int32` + bytes |
-| EncryptionAlgorithmId | `Byte` | version 2+; `1` = AES-256-GCM |
-| KeyDerivationAlgorithmId | `Byte` | version 5+; `1` = PBKDF2-HMAC-SHA256, `2` = Argon2id |
+| EncryptionAlgorithmId | `Byte` | `1` = AES-256-GCM |
+| KeyDerivationAlgorithmId | `Byte` | `1` = PBKDF2-HMAC-SHA256, `2` = Argon2id |
 | KeyDerivationIterations | `Int32` | PBKDF2 iterations or Argon2id time cost |
-| KeyDerivationMemoryKiB | `Int32` | version 5+; Argon2id memory cost |
-| KeyDerivationParallelism | `Int32` | version 5+; Argon2id lanes |
+| KeyDerivationMemoryKiB | `Int32` | Argon2id memory cost |
+| KeyDerivationParallelism | `Int32` | Argon2id lanes |
 | EncryptionSalt | bytes | length-prefixed `Int32` + bytes; current writers generate 32 bytes |
-| RecoveryRecordOffset | `Int64` | version 7+; absolute offset of the recovery section |
-| RecoveryRecordLength | `Int64` | version 7+; recovery section plus trailer length |
-| RecoveryPercent | `Int32` | version 7+; requested parity percentage |
+| RecoveryRecordOffset | `Int64` | absolute offset of the recovery section |
+| RecoveryRecordLength | `Int64` | recovery section plus trailer length |
+| RecoveryPercent | `Int32` | requested parity percentage |
+| OptionalHeaderMetadataJson | UTF-8 string | length-prefixed `Int32` + bytes; extensible header JSON |
 | HeaderChecksumCrc32C | `UInt32` | CRC32C over header bytes excluding this field |
 
-New encrypted archives use Argon2id with a time cost of 3, 64 MiB of memory, and up to 4 lanes by default. Readers retain the implicit PBKDF2 interpretation used by LPCv2-v4. LPCv5 records the KDF explicitly and can identify either algorithm.
+New encrypted archives use Argon2id with a time cost of 3, 64 MiB of memory, and up to 4 lanes by default. Readers retain the implicit PBKDF2 interpretation used by legacy archives.
 
 Current archive flags:
 
@@ -50,13 +51,9 @@ Current archive flags:
 
 Feature versions:
 
-- LPCv1: base unencrypted layout
-- LPCv2: AES-256-GCM payload encryption with implicit PBKDF2-HMAC-SHA256
-- LPCv3: locked archive flag
-- LPCv4: native solid stream layout
-- LPCv5: explicit KDF algorithm and parameters
-- LPCv6: encrypted metadata tables
-- LPCv7: recovery section and end trailer
+- LPCv1 to LPCv7: Legacy sub-formats (supported for reading only).
+- LPCv8: Unified format layout where all fields are always present, and optional extensions are supported via `OptionalHeaderMetadataJson`.
+
 
 `FormatVersion` is the highest version required by the selected feature combination. Multi-volume and SFX output remain reserved.
 

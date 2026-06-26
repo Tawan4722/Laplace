@@ -9,6 +9,7 @@ internal static class ArchiveFormatCodec
 {
     public static long WriteHeader(Stream stream, ArchiveHeader header)
     {
+        header.FormatVersion = 8; // Force format version 8 layout
         using var ms = new MemoryStream();
         using (var writer = new BinaryWriter(ms, Encoding.UTF8, true))
         {
@@ -24,28 +25,21 @@ internal static class ArchiveFormatCodec
             writer.Write(header.BlockTableOffset);
             writer.Write(header.DataSectionOffset);
             BinaryCodec.WriteUtf8String(writer, header.Comment);
-            if (header.FormatVersion >= 2)
-            {
-                writer.Write(header.EncryptionAlgorithmId);
-                if (header.FormatVersion >= 5)
-                {
-                    writer.Write(header.KeyDerivationAlgorithmId);
-                }
-                writer.Write(header.KeyDerivationIterations);
-                if (header.FormatVersion >= 5)
-                {
-                    writer.Write(header.KeyDerivationMemoryKiB);
-                    writer.Write(header.KeyDerivationParallelism);
-                }
-                writer.Write(header.EncryptionSalt.Length);
-                writer.Write(header.EncryptionSalt);
-            }
-            if (header.FormatVersion >= 7)
-            {
-                writer.Write(header.RecoveryRecordOffset);
-                writer.Write(header.RecoveryRecordLength);
-                writer.Write(header.RecoveryPercent);
-            }
+
+            // Always write the full set of encryption and recovery fields
+            writer.Write(header.EncryptionAlgorithmId);
+            writer.Write(header.KeyDerivationAlgorithmId);
+            writer.Write(header.KeyDerivationIterations);
+            writer.Write(header.KeyDerivationMemoryKiB);
+            writer.Write(header.KeyDerivationParallelism);
+            writer.Write(header.EncryptionSalt.Length);
+            writer.Write(header.EncryptionSalt);
+
+            writer.Write(header.RecoveryRecordOffset);
+            writer.Write(header.RecoveryRecordLength);
+            writer.Write(header.RecoveryPercent);
+
+            BinaryCodec.WriteUtf8String(writer, header.OptionalHeaderMetadataJson);
         }
 
         var data = ms.ToArray();
@@ -85,38 +79,65 @@ internal static class ArchiveFormatCodec
         var keyDerivationMemoryKiB = 0;
         var keyDerivationParallelism = 0;
         byte[] encryptionSalt = [];
-        if (formatVersion >= 2)
+        long recoveryRecordOffset = 0;
+        long recoveryRecordLength = 0;
+        var recoveryPercent = 0;
+        string optionalHeaderMetadataJson = string.Empty;
+
+        if (formatVersion >= 8)
         {
             encryptionAlgorithmId = reader.ReadByte();
-            keyDerivationAlgorithmId = formatVersion >= 5
-                ? reader.ReadByte()
-                : (byte)KeyDerivationAlgorithm.Pbkdf2Sha256;
+            keyDerivationAlgorithmId = reader.ReadByte();
             keyDerivationIterations = reader.ReadInt32();
-            if (formatVersion >= 5)
-            {
-                keyDerivationMemoryKiB = reader.ReadInt32();
-                keyDerivationParallelism = reader.ReadInt32();
-            }
+            keyDerivationMemoryKiB = reader.ReadInt32();
+            keyDerivationParallelism = reader.ReadInt32();
             var saltLength = reader.ReadInt32();
             if (saltLength < 0 || saltLength > 1024)
             {
                 throw new LaplaceArchiveException("Invalid encryption salt length.");
             }
-
             encryptionSalt = reader.ReadBytes(saltLength);
             if (encryptionSalt.Length != saltLength)
             {
                 throw new EndOfStreamException("Unexpected end of stream while reading encryption salt.");
             }
-        }
-        long recoveryRecordOffset = 0;
-        long recoveryRecordLength = 0;
-        var recoveryPercent = 0;
-        if (formatVersion >= 7)
-        {
             recoveryRecordOffset = reader.ReadInt64();
             recoveryRecordLength = reader.ReadInt64();
             recoveryPercent = reader.ReadInt32();
+            optionalHeaderMetadataJson = BinaryCodec.ReadUtf8String(reader);
+        }
+        else
+        {
+            if (formatVersion >= 2)
+            {
+                encryptionAlgorithmId = reader.ReadByte();
+                keyDerivationAlgorithmId = formatVersion >= 5
+                    ? reader.ReadByte()
+                    : (byte)KeyDerivationAlgorithm.Pbkdf2Sha256;
+                keyDerivationIterations = reader.ReadInt32();
+                if (formatVersion >= 5)
+                {
+                    keyDerivationMemoryKiB = reader.ReadInt32();
+                    keyDerivationParallelism = reader.ReadInt32();
+                }
+                var saltLength = reader.ReadInt32();
+                if (saltLength < 0 || saltLength > 1024)
+                {
+                    throw new LaplaceArchiveException("Invalid encryption salt length.");
+                }
+
+                encryptionSalt = reader.ReadBytes(saltLength);
+                if (encryptionSalt.Length != saltLength)
+                {
+                    throw new EndOfStreamException("Unexpected end of stream while reading encryption salt.");
+                }
+            }
+            if (formatVersion >= 7)
+            {
+                recoveryRecordOffset = reader.ReadInt64();
+                recoveryRecordLength = reader.ReadInt64();
+                recoveryPercent = reader.ReadInt32();
+            }
         }
 
         var checksumPosition = stream.Position;
@@ -159,7 +180,8 @@ internal static class ArchiveFormatCodec
             EncryptionSalt = encryptionSalt,
             RecoveryRecordOffset = recoveryRecordOffset,
             RecoveryRecordLength = recoveryRecordLength,
-            RecoveryPercent = recoveryPercent
+            RecoveryPercent = recoveryPercent,
+            OptionalHeaderMetadataJson = optionalHeaderMetadataJson
         };
     }
 
@@ -234,7 +256,7 @@ internal static class ArchiveFormatCodec
         return (nonce, tag, ciphertext);
     }
 
-    public static void WriteFileEntries(Stream stream, IReadOnlyList<FileEntryRecord> entries, ushort formatVersion = 1)
+    public static void WriteFileEntries(Stream stream, IReadOnlyList<FileEntryRecord> entries, ushort formatVersion = 8)
     {
         using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
         foreach (var entry in entries)
@@ -249,10 +271,7 @@ internal static class ArchiveFormatCodec
             writer.Write(entry.FileAttributes);
             writer.Write(entry.IsDirectory);
             writer.Write(entry.IsSymlink);
-            if (formatVersion >= 4)
-            {
-                writer.Write(entry.DataStreamOffset);
-            }
+            writer.Write(entry.DataStreamOffset); // Always write for version 8 layout
             writer.Write(entry.FirstBlockIndex);
             writer.Write(entry.BlockCount);
             BinaryCodec.WriteUtf8String(writer, entry.CompressionSummary);
@@ -263,7 +282,7 @@ internal static class ArchiveFormatCodec
         }
     }
 
-    public static List<FileEntryRecord> ReadFileEntries(Stream stream, long count, ushort formatVersion = 1)
+    public static List<FileEntryRecord> ReadFileEntries(Stream stream, long count, ushort formatVersion = 8)
     {
         var list = new List<FileEntryRecord>((int)Math.Min(count, int.MaxValue));
         using var reader = new BinaryReader(stream, Encoding.UTF8, true);
@@ -284,7 +303,7 @@ internal static class ArchiveFormatCodec
                 IsSymlink = reader.ReadBoolean()
             };
 
-            if (formatVersion >= 4)
+            if (formatVersion >= 8 || formatVersion >= 4)
             {
                 entry.DataStreamOffset = reader.ReadInt64();
             }
@@ -314,7 +333,7 @@ internal static class ArchiveFormatCodec
         return list;
     }
 
-    public static void WriteBlockEntries(Stream stream, IReadOnlyList<BlockEntryRecord> blocks, ushort formatVersion = 1)
+    public static void WriteBlockEntries(Stream stream, IReadOnlyList<BlockEntryRecord> blocks, ushort formatVersion = 8)
     {
         using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
         foreach (var block in blocks)
@@ -325,25 +344,19 @@ internal static class ArchiveFormatCodec
             writer.Write(block.CompressedBlockSize);
             writer.Write((byte)block.CompressionMethod);
             writer.Write(block.CompressionLevel);
-            if (formatVersion >= 4)
-            {
-                writer.Write(block.OriginalStreamOffset);
-            }
+            writer.Write(block.OriginalStreamOffset); // Always write for version 8 layout
             writer.Write(block.DataOffset);
             writer.Write(block.BlockChecksumCrc32C);
             writer.Write(block.Flags);
             writer.Write(block.IsRaw);
-            if (formatVersion >= 2)
-            {
-                writer.Write(block.EncryptionNonce.Length);
-                writer.Write(block.EncryptionNonce);
-                writer.Write(block.EncryptionTag.Length);
-                writer.Write(block.EncryptionTag);
-            }
+            writer.Write(block.EncryptionNonce.Length); // Always write for version 8 layout
+            writer.Write(block.EncryptionNonce);
+            writer.Write(block.EncryptionTag.Length); // Always write for version 8 layout
+            writer.Write(block.EncryptionTag);
         }
     }
 
-    public static List<BlockEntryRecord> ReadBlockEntries(Stream stream, long count, ushort formatVersion = 1)
+    public static List<BlockEntryRecord> ReadBlockEntries(Stream stream, long count, ushort formatVersion = 8)
     {
         var list = new List<BlockEntryRecord>((int)Math.Min(count, int.MaxValue));
         using var reader = new BinaryReader(stream, Encoding.UTF8, true);
@@ -360,7 +373,7 @@ internal static class ArchiveFormatCodec
                 CompressionLevel = reader.ReadInt32(),
             };
 
-            if (formatVersion >= 4)
+            if (formatVersion >= 8 || formatVersion >= 4)
             {
                 block.OriginalStreamOffset = reader.ReadInt64();
             }
@@ -370,7 +383,7 @@ internal static class ArchiveFormatCodec
             block.Flags = reader.ReadUInt32();
             block.IsRaw = reader.ReadBoolean();
 
-            if (formatVersion >= 2)
+            if (formatVersion >= 8 || formatVersion >= 2)
             {
                 var nonceLength = reader.ReadInt32();
                 if (nonceLength < 0 || nonceLength > 1024)

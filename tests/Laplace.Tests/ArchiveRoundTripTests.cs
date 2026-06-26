@@ -637,7 +637,7 @@ public sealed class ArchiveRoundTripTests
             Assert.True(
                 new FileInfo(extremePath).Length < new FileInfo(compressedPath).Length - (1024 * 1024),
                 $"Extreme={new FileInfo(extremePath).Length}, compressed={new FileInfo(compressedPath).Length}");
-            Assert.Equal(1, new ArchiveReader().ReadHeaderOnly(extremePath).FormatVersion);
+            Assert.Equal(8, new ArchiveReader().ReadHeaderOnly(extremePath).FormatVersion);
             Assert.Contains(
                 new ArchiveReader().Read(extremePath).BlockEntries,
                 block => block.CompressionMethod == CompressionMethod.ZstdHigh);
@@ -834,7 +834,7 @@ public sealed class ArchiveRoundTripTests
 
         var archive = new ArchiveReader().Read(archivePath);
         Assert.True(archive.Header.IsEncrypted);
-        Assert.Equal(5, archive.Header.FormatVersion);
+        Assert.Equal(8, archive.Header.FormatVersion);
         Assert.Equal((byte)KeyDerivationAlgorithm.Argon2id, archive.Header.KeyDerivationAlgorithmId);
         Assert.Equal(CreateArchiveOptions.DefaultArgon2Iterations, archive.Header.KeyDerivationIterations);
         Assert.Equal(CreateArchiveOptions.DefaultArgon2MemoryKiB, archive.Header.KeyDerivationMemoryKiB);
@@ -932,7 +932,7 @@ public sealed class ArchiveRoundTripTests
         });
 
         var archive = new ArchiveReader().Read(archivePath);
-        Assert.Equal(5, archive.Header.FormatVersion);
+        Assert.Equal(8, archive.Header.FormatVersion);
         Assert.Equal((byte)KeyDerivationAlgorithm.Pbkdf2Sha256, archive.Header.KeyDerivationAlgorithmId);
         Assert.True((await new ArchiveTester(registry).TestAsync(archivePath, password)).Success);
 
@@ -963,7 +963,7 @@ public sealed class ArchiveRoundTripTests
 
         var reader = new ArchiveReader();
         var header = reader.ReadHeaderOnly(archivePath);
-        Assert.Equal(6, header.FormatVersion);
+        Assert.Equal(8, header.FormatVersion);
         Assert.True(header.IsMetadataEncrypted);
         Assert.Throws<ArchivePasswordRequiredException>(() => reader.Read(archivePath));
         Assert.Throws<ArchivePasswordException>(() => reader.Read(archivePath, new PasswordContext("wrong")));
@@ -1094,7 +1094,7 @@ public sealed class ArchiveRoundTripTests
 
         var archive = new ArchiveReader().Read(archivePath);
         Assert.True(archive.Header.IsSolid);
-        Assert.Equal(4, archive.Header.FormatVersion);
+        Assert.Equal(8, archive.Header.FormatVersion);
         Assert.All(archive.BlockEntries, block => Assert.Equal(-1, block.OwningFileEntryId));
         Assert.Contains(archive.FileEntries, entry => !entry.IsDirectory && entry.BlockCount > 1);
 
@@ -1220,7 +1220,7 @@ public sealed class ArchiveRoundTripTests
         });
 
         var archive = new ArchiveReader().Read(archivePath);
-        Assert.Equal(7, archive.Header.FormatVersion);
+        Assert.Equal(8, archive.Header.FormatVersion);
         Assert.True(archive.Header.HasRecoveryRecord);
         Assert.Equal(25, archive.Header.RecoveryPercent);
         var block = archive.BlockEntries[archive.BlockEntries.Count / 2];
@@ -1342,7 +1342,7 @@ public sealed class ArchiveRoundTripTests
 
         var archive = new ArchiveReader().Read(archivePath);
         Assert.True(archive.Header.IsSolid);
-        Assert.Equal(4, archive.Header.FormatVersion);
+        Assert.Equal(8, archive.Header.FormatVersion);
         Assert.True((await service.TestAsync(archivePath)).Success);
 
         await service.ExtractAsync(archivePath, extractPath, new ExtractArchiveOptions { Overwrite = true, VerifyChecksums = true });
@@ -2290,5 +2290,36 @@ public sealed class ArchiveRoundTripTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task OptionalHeaderMetadataJson_RoundTripsCorrectly()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "metadata.txt");
+            await File.WriteAllTextAsync(sourceFile, "LPCv8 format upgrade metadata test");
+            var archivePath = Path.Combine(root, "metadata_test.lpc");
+            var registry = new CompressorRegistry();
+            var service = new ArchiveWriter(registry);
+
+            var testJson = "{\"author\":\"Antigravity\",\"version\":\"8.0\",\"custom_tag\":123}";
+
+            await service.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+            {
+                VerifyAfterCompression = false,
+                OptionalHeaderMetadataJson = testJson
+            });
+
+            var header = new ArchiveReader().ReadHeaderOnly(archivePath);
+            Assert.Equal(8, header.FormatVersion);
+            Assert.Equal(testJson, header.OptionalHeaderMetadataJson);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
 }
+
 

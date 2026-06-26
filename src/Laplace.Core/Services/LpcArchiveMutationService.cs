@@ -407,7 +407,7 @@ public sealed class LpcArchiveMutationService
         {
             var newHeader = new ArchiveHeader
             {
-                FormatVersion = archive.Header.FormatVersion,
+                FormatVersion = 8,
                 ArchiveFlags = archive.Header.ArchiveFlags,
                 CreatedUnixMilliseconds = archive.Header.CreatedUnixMilliseconds,
                 CreatorVersion = archive.Header.CreatorVersion,
@@ -418,14 +418,15 @@ public sealed class LpcArchiveMutationService
                 KeyDerivationMemoryKiB = archive.Header.KeyDerivationMemoryKiB,
                 KeyDerivationParallelism = archive.Header.KeyDerivationParallelism,
                 EncryptionSalt = archive.Header.EncryptionSalt,
-                Comment = newComment ?? archive.Header.Comment
+                Comment = newComment ?? archive.Header.Comment,
+                OptionalHeaderMetadataJson = archive.Header.OptionalHeaderMetadataJson
             };
 
             if (forceLock)
             {
-                newHeader.FormatVersion = Math.Max(newHeader.FormatVersion, (ushort)3);
                 newHeader.ArchiveFlags |= ArchiveHeader.LockedFlag;
             }
+
 
             var newFileEntries = archive.FileEntries.Select(x => new FileEntryRecord
             {

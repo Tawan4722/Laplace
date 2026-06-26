@@ -22,6 +22,7 @@ public sealed class CreateArchiveOptions
     public bool VerifyAfterCompression { get; set; } = true;
     public int Threads { get; set; } = Environment.ProcessorCount;
     public string Comment { get; set; } = string.Empty;
+    public string OptionalHeaderMetadataJson { get; set; } = string.Empty;
     public PasswordContext? Password { get; set; }
     public KeyDerivationAlgorithm KeyDerivationAlgorithm { get; set; } = KeyDerivationAlgorithm.Argon2id;
     public int KeyDerivationIterations { get; set; } = DefaultKeyDerivationIterations;

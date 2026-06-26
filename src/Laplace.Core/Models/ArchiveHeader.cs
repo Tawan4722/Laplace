@@ -31,6 +31,8 @@ public sealed class ArchiveHeader
     public long RecoveryRecordOffset { get; set; }
     public long RecoveryRecordLength { get; set; }
     public int RecoveryPercent { get; set; }
+    public string OptionalHeaderMetadataJson { get; set; } = string.Empty;
+
 
     public bool IsEncrypted => (ArchiveFlags & EncryptionFlag) != 0;
     public bool IsLocked => (ArchiveFlags & LockedFlag) != 0;

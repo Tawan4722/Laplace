@@ -45,9 +45,12 @@ public sealed class ArchiveWriter
 
         var header = new ArchiveHeader
         {
+            FormatVersion = 8,
             CreatedUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            CreatorVersion = 0x00010000,
             DefaultBlockSize = (uint)options.BlockSizeBytes,
-            Comment = options.Comment
+            Comment = options.Comment,
+            OptionalHeaderMetadataJson = options.OptionalHeaderMetadataJson
         };
         var useSolid = ShouldUseSolidMode(options, sorted);
         if (options.BlockSizeBytes <= 0)
@@ -82,25 +85,21 @@ public sealed class ArchiveWriter
 
         if (options.LockArchive)
         {
-            header.FormatVersion = 3;
             header.ArchiveFlags |= ArchiveHeader.LockedFlag;
         }
 
         if (useSolid)
         {
-            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)4);
             header.ArchiveFlags |= ArchiveHeader.SolidFlag;
         }
 
         if (options.EncryptMetadata)
         {
-            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)6);
             header.ArchiveFlags |= ArchiveHeader.MetadataEncryptionFlag;
         }
 
         if (options.RecoveryPercent > 0)
         {
-            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)7);
             header.ArchiveFlags |= ArchiveHeader.RecoveryRecordFlag;
             header.RecoveryPercent = options.RecoveryPercent;
         }
@@ -108,7 +107,6 @@ public sealed class ArchiveWriter
         var encryptionKey = Array.Empty<byte>();
         if (options.Password is not null)
         {
-            header.FormatVersion = Math.Max(header.FormatVersion, (ushort)5);
             header.ArchiveFlags |= ArchiveHeader.EncryptionFlag;
             header.EncryptionAlgorithmId = ArchiveHeader.EncryptionAlgorithmAes256Gcm;
             header.KeyDerivationAlgorithmId = (byte)options.KeyDerivationAlgorithm;
