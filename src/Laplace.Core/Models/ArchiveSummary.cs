@@ -19,4 +19,6 @@ public sealed class ArchiveSummary
     public bool IsVolume { get; init; }
     public string Comment { get; init; } = string.Empty;
     public string Notes { get; init; } = string.Empty;
+    public string OptionalHeaderMetadataJson { get; init; } = string.Empty;
 }
+

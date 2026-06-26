@@ -29,7 +29,8 @@ public static class ArchiveInfoBuilder
             CreatedUtc = DateTimeOffset.FromUnixTimeMilliseconds(archive.Header.CreatedUnixMilliseconds).UtcDateTime,
             IsEncrypted = archive.Header.IsEncrypted,
             IsLocked = archive.Header.IsLocked,
-            Comment = archive.Header.Comment
+            Comment = archive.Header.Comment,
+            OptionalHeaderMetadataJson = archive.Header.OptionalHeaderMetadataJson
         };
     }
 }
@@ -48,4 +49,6 @@ public sealed class ArchiveInfo
     public bool IsEncrypted { get; init; }
     public bool IsLocked { get; init; }
     public string Comment { get; init; } = string.Empty;
+    public string OptionalHeaderMetadataJson { get; init; } = string.Empty;
 }
+

@@ -1687,6 +1687,10 @@ internal static class Program
             {
                 options.MaxChunkSize = (int)ParseSize(args[++i]);
             }
+            else if (current == "--metadata-json" && i + 1 < args.Length)
+            {
+                options.OptionalHeaderMetadataJson = args[++i];
+            }
         }
 
         return options;
@@ -2510,6 +2514,10 @@ internal static class Program
         if (!string.IsNullOrEmpty(info.Comment))
         {
             Console.WriteLine($"Comment: {info.Comment}");
+        }
+        if (!string.IsNullOrEmpty(info.OptionalHeaderMetadataJson))
+        {
+            Console.WriteLine($"Metadata JSON: {info.OptionalHeaderMetadataJson}");
         }
 
         Console.WriteLine($"Files: {info.FileCount}");

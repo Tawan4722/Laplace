@@ -7,14 +7,40 @@ public static class ChecksumService
     public static uint ComputeCrc32C(ReadOnlySpan<byte> data)
     {
         var crc = 0xFFFFFFFFu;
-        foreach (var b in data)
+        var offset = 0;
+        var len = data.Length;
+
+        while (len - offset >= 8)
         {
-            var idx = (crc ^ b) & 0xFF;
-            crc = Crc32CTable[idx] ^ (crc >> 8);
+            var val = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(offset, 8));
+            crc = System.Numerics.BitOperations.Crc32C(crc, val);
+            offset += 8;
+        }
+
+        if (len - offset >= 4)
+        {
+            var val = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
+            crc = System.Numerics.BitOperations.Crc32C(crc, val);
+            offset += 4;
+        }
+
+        if (len - offset >= 2)
+        {
+            var val = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(data.Slice(offset, 2));
+            crc = System.Numerics.BitOperations.Crc32C(crc, val);
+            offset += 2;
+        }
+
+        if (len - offset >= 1)
+        {
+            crc = System.Numerics.BitOperations.Crc32C(crc, data[offset]);
         }
 
         return ~crc;
     }
+
+
+
 
     public static byte[] ComputeSha256(ReadOnlySpan<byte> data) => SHA256.HashData(data);
 

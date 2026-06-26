@@ -621,6 +621,39 @@ public sealed class CliBlackBoxTests
         }
     }
 
+    [Fact]
+    public async Task MetadataJsonOption_SavesAndPrintsMetadata()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "data.txt");
+            var archivePath = Path.Combine(root, "metadata.lpc");
+            await File.WriteAllTextAsync(sourceFile, "metadata test content");
+
+            var testMetadata = "{\"source\":\"CliTest\",\"hash\":\"xyz123\"}";
+
+            var result = await RunLaplaceAsync(
+                "compress",
+                sourceFile,
+                archivePath,
+                "--metadata-json",
+                testMetadata,
+                "--no-verify");
+
+            AssertSuccess(result);
+            Assert.True(File.Exists(archivePath));
+
+            var infoResult = await RunLaplaceAsync("info", archivePath);
+            AssertSuccess(infoResult);
+            Assert.Contains($"Metadata JSON: {testMetadata}", infoResult.StandardOutput);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static async Task<CliResult> RunLaplaceAsync(params string[] arguments)
     {
         var repoRoot = FindRepoRoot();

@@ -213,6 +213,7 @@ public sealed class UniversalArchiveService
             IsMetadataEncrypted = archive.Header.IsMetadataEncrypted,
             HasRecoveryRecord = archive.Header.HasRecoveryRecord,
             Comment = info.Comment,
+            OptionalHeaderMetadataJson = info.OptionalHeaderMetadataJson,
             Notes = string.Join(" ", new[]
             {
                 archive.Header.IsMetadataEncrypted
@@ -223,6 +224,7 @@ public sealed class UniversalArchiveService
                 archive.Header.HasRecoveryRecord ? "LPC recovery records are available." : string.Empty
             }.Where(note => note.Length > 0))
         };
+
     }
 
     private static ArchiveTestResult ConvertLpcTest(TestArchiveResult result)
