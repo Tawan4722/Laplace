@@ -9,7 +9,7 @@ public static class LpcSfxHelper
     public const string SfxSignature = "SFXLPC!!";
     public const int FooterSize = 16; // 8 bytes offset + 8 bytes signature
 
-    private static readonly byte[] SignatureBytes = Encoding.ASCII.GetBytes(SfxSignature);
+
 
     public static bool IsRunningAsSfx
     {
@@ -60,11 +60,8 @@ public static class LpcSfxHelper
                 return false;
 
             // Check signature in the last 8 bytes
-            for (int i = 0; i < SignatureBytes.Length; i++)
-            {
-                if (buffer[8 + i] != SignatureBytes[i])
-                    return false;
-            }
+            if (!buffer.AsSpan(8).SequenceEqual("SFXLPC!!"u8))
+                return false;
 
             long offset = BitConverter.ToInt64(buffer, 0);
             return offset > 0 && offset < stream.Length - FooterSize;

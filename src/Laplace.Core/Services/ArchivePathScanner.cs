@@ -21,14 +21,18 @@ internal static class ArchivePathScanner
 
             if (Directory.Exists(full))
             {
-                var rootName = Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-                if (string.IsNullOrWhiteSpace(rootName))
-                {
-                    rootName = new DirectoryInfo(full).Name;
-                }
-
+                var dirInfo = new DirectoryInfo(full);
+                var rootName = dirInfo.Name;
                 result.Add(new InputEntry(full, rootName, true));
-                ScanDirectory(full, rootName, result);
+
+                var parentPath = dirInfo.Parent?.FullName;
+                foreach (var info in dirInfo.EnumerateFileSystemInfos("*", SearchOption.AllDirectories))
+                {
+                    var relative = parentPath is not null
+                        ? Path.GetRelativePath(parentPath, info.FullName)
+                        : Path.Combine(rootName, Path.GetRelativePath(full, info.FullName));
+                    result.Add(new InputEntry(info.FullName, PathSecurity.NormalizeArchivePath(relative), info is DirectoryInfo));
+                }
                 continue;
             }
 
@@ -37,24 +41,6 @@ internal static class ArchivePathScanner
 
         result = GlobFilter.Apply(result, includePatterns, excludePatterns);
         return result;
-    }
-
-    private static void ScanDirectory(string fullPath, string relativePath, List<InputEntry> entries)
-    {
-        foreach (var directory in Directory.GetDirectories(fullPath))
-        {
-            var name = Path.GetFileName(directory);
-            var relative = PathSecurity.NormalizeArchivePath(Path.Combine(relativePath, name));
-            entries.Add(new InputEntry(directory, relative, true));
-            ScanDirectory(directory, relative, entries);
-        }
-
-        foreach (var file in Directory.GetFiles(fullPath))
-        {
-            var name = Path.GetFileName(file);
-            var relative = PathSecurity.NormalizeArchivePath(Path.Combine(relativePath, name));
-            entries.Add(new InputEntry(file, relative, false));
-        }
     }
 }
 

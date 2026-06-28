@@ -121,7 +121,7 @@ public sealed class ArchiveExtractor
                                 foreach (var block in fileBlocks)
                                 {
                                     cancellationToken.ThrowIfCancellationRequested();
-                                    var decompressed = await ReadBlockAsync(archive, localArchiveStream, block, encryptionKey, cancellationToken).ConfigureAwait(false);
+                                    var decompressed = await ReadAndDecompressBlockAsync(localArchiveStream, archive, block, encryptionKey, cancellationToken).ConfigureAwait(false);
                                     hash?.AppendData(decompressed);
                                     await output.WriteAsync(decompressed, cancellationToken).ConfigureAwait(false);
                                     
@@ -243,16 +243,24 @@ public sealed class ArchiveExtractor
                 producerLogicalOffset += block.OriginalBlockSize;
 
                 archiveStream.Position = block.DataOffset;
-                var compressedBytes = new byte[block.CompressedBlockSize];
-                var read = await archiveStream.ReadAsync(compressedBytes.AsMemory(0, compressedBytes.Length), cancellationToken).ConfigureAwait(false);
-                if (read != compressedBytes.Length)
+                var compressedBytes = System.Buffers.ArrayPool<byte>.Shared.Rent(block.CompressedBlockSize);
+                try
                 {
-                    throw new EndOfStreamException($"Unexpected EOF while reading block #{block.BlockId}.");
-                }
+                    var read = await archiveStream.ReadAsync(compressedBytes.AsMemory(0, block.CompressedBlockSize), cancellationToken).ConfigureAwait(false);
+                    if (read != block.CompressedBlockSize)
+                    {
+                        throw new EndOfStreamException($"Unexpected EOF while reading block #{block.BlockId}.");
+                    }
 
-                var blockRecord = block;
-                var task = Task.Run(() => ProcessCompressedBlock(archive, compressedBytes, blockRecord, encryptionKey), cancellationToken);
-                pendingBlocks.Enqueue(task);
+                    var blockRecord = block;
+                    var task = Task.Run(() => ProcessCompressedBlock(archive, compressedBytes, block.CompressedBlockSize, blockRecord, encryptionKey), cancellationToken);
+                    pendingBlocks.Enqueue(task);
+                }
+                catch
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(compressedBytes);
+                    throw;
+                }
 
                 if (pendingBlocks.Count >= maxPending)
                 {
@@ -498,51 +506,61 @@ public sealed class ArchiveExtractor
 
     private byte[] ProcessCompressedBlock(
         ArchiveDocument archive,
-        byte[] compressedBytes,
+        byte[] rentedArray,
+        int length,
         BlockEntryRecord block,
         byte[] encryptionKey)
     {
-        var actualChecksum = ChecksumService.ComputeCrc32C(compressedBytes);
-        if (actualChecksum != block.BlockChecksumCrc32C)
+        try
         {
-            throw new InvalidDataException($"Block checksum mismatch at block #{block.BlockId}.");
-        }
-
-        var payload = compressedBytes;
-        if (archive.Header.IsEncrypted)
-        {
-            try
+            var actualChecksum = ChecksumService.ComputeCrc32C(rentedArray.AsSpan(0, length));
+            if (actualChecksum != block.BlockChecksumCrc32C)
             {
-                payload = ArchiveEncryption.DecryptBlock(payload, encryptionKey, block);
+                throw new InvalidDataException($"Block checksum mismatch at block #{block.BlockId}.");
             }
-            catch (CryptographicException)
+
+            var payload = rentedArray.AsSpan(0, length);
+            byte[]? decrypted = null;
+            if (archive.Header.IsEncrypted)
             {
-                throw new ArchivePasswordException($"Invalid password or corrupted encrypted block #{block.BlockId}.");
+                try
+                {
+                    decrypted = ArchiveEncryption.DecryptBlock(payload, encryptionKey, block);
+                    payload = decrypted;
+                }
+                catch (CryptographicException)
+                {
+                    throw new ArchivePasswordException($"Invalid password or corrupted encrypted block #{block.BlockId}.");
+                }
             }
-        }
 
-        byte[] decompressed;
-        if (block.CompressionMethod == CompressionMethod.Raw || block.IsRaw)
-        {
-            decompressed = payload;
-        }
-        else
-        {
-            var decompressor = _compressorRegistry.GetCompressor(block.CompressionMethod);
-            decompressed = decompressor.Decompress(payload, block.OriginalBlockSize);
-        }
+            byte[] decompressed;
+            if (block.CompressionMethod == CompressionMethod.Raw || block.IsRaw)
+            {
+                decompressed = payload.ToArray();
+            }
+            else
+            {
+                var decompressor = _compressorRegistry.GetCompressor(block.CompressionMethod);
+                decompressed = decompressor.Decompress(payload, block.OriginalBlockSize);
+            }
 
-        if (decompressed.Length != block.OriginalBlockSize)
-        {
-            throw new InvalidDataException($"Unexpected decompressed block size at block #{block.BlockId}.");
-        }
+            if (decompressed.Length != block.OriginalBlockSize)
+            {
+                throw new InvalidDataException($"Decompressed block size mismatch at block #{block.BlockId}.");
+            }
 
-        if ((block.Flags & 2u) != 0)
-        {
-            BcjFilter.DecodeX86(decompressed);
-        }
+            if ((block.Flags & 2u) != 0)
+            {
+                BcjFilter.DecodeX86(decompressed);
+            }
 
-        return decompressed;
+            return decompressed;
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rentedArray);
+        }
     }
 
     public async Task ExtractFileToStreamAsync(
@@ -571,7 +589,7 @@ public sealed class ArchiveExtractor
             foreach (var block in overlappingBlocks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var decompressed = await ReadBlockAsync(archive, archiveStream, block, encryptionKey, cancellationToken).ConfigureAwait(false);
+                var decompressed = await ReadAndDecompressBlockAsync(archiveStream, archive, block, encryptionKey, cancellationToken).ConfigureAwait(false);
 
                 var blockStart = block.OriginalStreamOffset;
                 var blockEnd = blockStart + block.OriginalBlockSize;
@@ -598,67 +616,79 @@ public sealed class ArchiveExtractor
             foreach (var block in fileBlocks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var decompressed = await ReadBlockAsync(archive, archiveStream, block, encryptionKey, cancellationToken).ConfigureAwait(false);
+                var decompressed = await ReadAndDecompressBlockAsync(archiveStream, archive, block, encryptionKey, cancellationToken).ConfigureAwait(false);
                 await destinationStream.WriteAsync(decompressed.AsMemory(0, decompressed.Length), cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
-    private async Task<byte[]> ReadBlockAsync(
-        ArchiveDocument archive,
+    private async Task<byte[]> ReadAndDecompressBlockAsync(
         Stream archiveStream,
+        ArchiveDocument archive,
         BlockEntryRecord block,
         byte[] encryptionKey,
         CancellationToken cancellationToken)
     {
         archiveStream.Position = block.DataOffset;
-        var compressedBytes = new byte[block.CompressedBlockSize];
-        var read = await archiveStream.ReadAsync(compressedBytes.AsMemory(0, compressedBytes.Length), cancellationToken).ConfigureAwait(false);
-        if (read != compressedBytes.Length)
+        var rentedArray = System.Buffers.ArrayPool<byte>.Shared.Rent(block.CompressedBlockSize);
+        try
         {
-            throw new EndOfStreamException($"Unexpected EOF while reading block #{block.BlockId}.");
-        }
-
-        var actualChecksum = ChecksumService.ComputeCrc32C(compressedBytes);
-        if (actualChecksum != block.BlockChecksumCrc32C)
-        {
-            throw new InvalidDataException($"Block checksum mismatch at block #{block.BlockId}.");
-        }
-
-        if (archive.Header.IsEncrypted)
-        {
-            try
+            var read = await archiveStream.ReadAsync(rentedArray.AsMemory(0, block.CompressedBlockSize), cancellationToken).ConfigureAwait(false);
+            if (read != block.CompressedBlockSize)
             {
-                compressedBytes = ArchiveEncryption.DecryptBlock(compressedBytes, encryptionKey, block);
+                throw new EndOfStreamException($"Unexpected EOF while reading block #{block.BlockId}.");
             }
-            catch (CryptographicException)
+
+            var actualChecksum = ChecksumService.ComputeCrc32C(rentedArray.AsSpan(0, block.CompressedBlockSize));
+            if (actualChecksum != block.BlockChecksumCrc32C)
             {
-                throw new ArchivePasswordException($"Invalid password or corrupted encrypted block #{block.BlockId}.");
+                throw new InvalidDataException($"Block checksum mismatch at block #{block.BlockId}.");
             }
-        }
 
-        byte[] decompressed;
-        if (block.CompressionMethod == CompressionMethod.Raw || block.IsRaw)
-        {
-            decompressed = compressedBytes;
-        }
-        else
-        {
-            var decompressor = _compressorRegistry.GetCompressor(block.CompressionMethod);
-            decompressed = decompressor.Decompress(compressedBytes, block.OriginalBlockSize);
-        }
+            byte[]? decrypted = null;
+            if (archive.Header.IsEncrypted)
+            {
+                try
+                {
+                    decrypted = ArchiveEncryption.DecryptBlock(rentedArray.AsSpan(0, block.CompressedBlockSize), encryptionKey, block);
+                }
+                catch (CryptographicException)
+                {
+                    throw new ArchivePasswordException($"Invalid password or corrupted encrypted block #{block.BlockId}.");
+                }
+            }
 
-        if (decompressed.Length != block.OriginalBlockSize)
-        {
-            throw new InvalidDataException($"Unexpected decompressed block size at block #{block.BlockId}.");
-        }
+            byte[] decompressed;
+            if (block.CompressionMethod == CompressionMethod.Raw || block.IsRaw)
+            {
+                decompressed = decrypted is not null
+                    ? decrypted
+                    : rentedArray.AsSpan(0, block.CompressedBlockSize).ToArray();
+            }
+            else
+            {
+                var decompressor = _compressorRegistry.GetCompressor(block.CompressionMethod);
+                decompressed = decompressor.Decompress(
+                    decrypted is not null ? decrypted : rentedArray.AsSpan(0, block.CompressedBlockSize),
+                    block.OriginalBlockSize);
+            }
 
-        if ((block.Flags & 2u) != 0)
-        {
-            BcjFilter.DecodeX86(decompressed);
-        }
+            if (decompressed.Length != block.OriginalBlockSize)
+            {
+                throw new InvalidDataException($"Unexpected decompressed block size at block #{block.BlockId}.");
+            }
 
-        return decompressed;
+            if ((block.Flags & 2u) != 0)
+            {
+                BcjFilter.DecodeX86(decompressed);
+            }
+
+            return decompressed;
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rentedArray);
+        }
     }
 
     private static async Task<int> FinalizeEmptySolidFilesAsync(

@@ -81,7 +81,7 @@ public static class ArchiveEncryption
         return argon2.GetBytes(KeySizeBytes);
     }
 
-    public static byte[] EncryptBlock(byte[] plaintext, byte[] key, BlockEntryRecord block)
+    public static byte[] EncryptBlock(ReadOnlySpan<byte> plaintext, byte[] key, BlockEntryRecord block)
     {
         var nonce = RandomNumberGenerator.GetBytes(NonceSizeBytes);
         var tag = new byte[TagSizeBytes];
@@ -95,7 +95,7 @@ public static class ArchiveEncryption
         return ciphertext;
     }
 
-    public static byte[] DecryptBlock(byte[] ciphertext, byte[] key, BlockEntryRecord block)
+    public static byte[] DecryptBlock(ReadOnlySpan<byte> ciphertext, byte[] key, BlockEntryRecord block)
     {
         if (block.EncryptionNonce.Length != NonceSizeBytes || block.EncryptionTag.Length != TagSizeBytes)
         {

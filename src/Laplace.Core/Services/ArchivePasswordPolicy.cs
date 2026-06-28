@@ -13,19 +13,11 @@ public static class ArchivePasswordPolicy
 
     public static void EnsureConfirmationMatches(string password, string confirmation)
     {
-        var passwordBytes = Encoding.UTF8.GetBytes(password);
-        var confirmationBytes = Encoding.UTF8.GetBytes(confirmation);
-        try
+        var passSpan = System.Runtime.InteropServices.MemoryMarshal.AsBytes(password.AsSpan());
+        var confSpan = System.Runtime.InteropServices.MemoryMarshal.AsBytes(confirmation.AsSpan());
+        if (!CryptographicOperations.FixedTimeEquals(passSpan, confSpan))
         {
-            if (!CryptographicOperations.FixedTimeEquals(passwordBytes, confirmationBytes))
-            {
-                throw new ArgumentException("Passwords do not match.");
-            }
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(passwordBytes);
-            CryptographicOperations.ZeroMemory(confirmationBytes);
+            throw new ArgumentException("Passwords do not match.");
         }
     }
 }

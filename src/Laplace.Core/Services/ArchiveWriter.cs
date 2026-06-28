@@ -418,105 +418,142 @@ public sealed class ArchiveWriter
                 options.BlockSizeBytes,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
             using var incrementalHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var buffer = new byte[options.BlockSizeBytes];
-
-            CdcChunkReader? cdcReader = options.UseCdc
-                ? new CdcChunkReader(fs, options.MinChunkSize, options.AvgChunkSize, options.MaxChunkSize)
-                : null;
-
-            while (true)
+            var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(options.BlockSizeBytes);
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                byte[]? blockData;
-                int bytesRead = 0;
+                CdcChunkReader? cdcReader = options.UseCdc
+                    ? new CdcChunkReader(fs, options.MinChunkSize, options.AvgChunkSize, options.MaxChunkSize)
+                    : null;
 
-                if (cdcReader is not null)
+                byte[]? rentedBlockData = null;
+
+                while (true)
                 {
-                    blockData = await cdcReader.NextChunkAsync(cancellationToken).ConfigureAwait(false);
-                    if (blockData is null)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    byte[]? blockData;
+                    int bytesRead = 0;
+
+                    if (cdcReader is not null)
                     {
-                        break;
+                        blockData = await cdcReader.NextChunkAsync(cancellationToken).ConfigureAwait(false);
+                        if (blockData is null)
+                        {
+                            break;
+                        }
+                        bytesRead = blockData.Length;
+                        rentedBlockData = null;
                     }
-                    bytesRead = blockData.Length;
-                }
-                else
-                {
-                    var read = await fs.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
-                    if (read == 0)
+                    else
                     {
-                        break;
+                        var read = await fs.ReadAsync(buffer.AsMemory(0, options.BlockSizeBytes), cancellationToken).ConfigureAwait(false);
+                        if (read == 0)
+                        {
+                            break;
+                        }
+                        bytesRead = read;
+                        rentedBlockData = System.Buffers.ArrayPool<byte>.Shared.Rent(bytesRead);
+                        buffer.AsSpan(0, bytesRead).CopyTo(rentedBlockData);
+                        blockData = rentedBlockData;
                     }
-                    bytesRead = read;
-                    blockData = buffer.AsSpan(0, bytesRead).ToArray();
-                }
 
-                incrementalHash.AppendData(blockData);
+                    incrementalHash.AppendData(blockData.AsSpan(0, bytesRead));
 
-                var relativePath = sourceEntry.RelativePath;
-                string? blockHash = null;
-                if (options.Deduplicate)
-                {
-                    blockHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(blockData));
-                }
-
-                if (options.Deduplicate && blockHash is not null && writtenBlocks.TryGetValue(blockHash, out var existingBlock))
-                {
-                    var prepared = new PreparedIndependentBlock(fileEntry, blockData.Length, CompressionMethod.Raw, [], true)
+                    var relativePath = sourceEntry.RelativePath;
+                    string? blockHash = null;
+                    if (options.Deduplicate)
                     {
-                        OriginalSha256 = blockHash,
-                        IsDuplicate = true,
-                        DuplicateOfHash = blockHash
-                    };
-                    await ProcessCompletedBlockAsync(prepared).ConfigureAwait(false);
-                }
-                else
-                {
-                    if (maxPendingBlocks == 1)
+                        blockHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(blockData.AsSpan(0, bytesRead)));
+                    }
+
+                    if (options.Deduplicate && blockHash is not null && writtenBlocks.TryGetValue(blockHash, out var existingBlock))
                     {
-                        var (outputMethod, outputBytes, isRaw, isBcj) = SelectAndCompressBlock(relativePath, options, blockData, blockData.Length);
-                        var prepared = new PreparedIndependentBlock(fileEntry, blockData.Length, outputMethod, outputBytes, isRaw)
+                        var prepared = new PreparedIndependentBlock(fileEntry, bytesRead, CompressionMethod.Raw, [], true)
                         {
                             OriginalSha256 = blockHash,
-                            IsBcj = isBcj
+                            IsDuplicate = true,
+                            DuplicateOfHash = blockHash
                         };
                         await ProcessCompletedBlockAsync(prepared).ConfigureAwait(false);
-
-                        if (options.Mode == CompressionMode.Extreme)
+                        if (rentedBlockData is not null)
                         {
-                            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                            System.Buffers.ArrayPool<byte>.Shared.Return(rentedBlockData);
                         }
                     }
                     else
                     {
-                        var currentHash = blockHash;
-                        var dataToCompress = blockData;
-                        pendingBlocks.Enqueue(Task.Run(() =>
+                        if (maxPendingBlocks == 1)
                         {
-                            var (outputMethod, outputBytes, isRaw, isBcj) = SelectAndCompressBlock(relativePath, options, dataToCompress, dataToCompress.Length);
-                            return new PreparedIndependentBlock(fileEntry, dataToCompress.Length, outputMethod, outputBytes, isRaw)
+                            try
                             {
-                                OriginalSha256 = currentHash,
-                                IsBcj = isBcj
-                            };
-                        }, cancellationToken));
+                                var (outputMethod, outputBytes, isRaw, isBcj) = SelectAndCompressBlock(relativePath, options, blockData, bytesRead);
+                                var prepared = new PreparedIndependentBlock(fileEntry, bytesRead, outputMethod, outputBytes, isRaw)
+                                {
+                                    OriginalSha256 = blockHash,
+                                    IsBcj = isBcj
+                                };
+                                await ProcessCompletedBlockAsync(prepared).ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                if (rentedBlockData is not null)
+                                {
+                                    System.Buffers.ArrayPool<byte>.Shared.Return(rentedBlockData);
+                                }
+                            }
 
-                        if (pendingBlocks.Count >= maxPendingBlocks)
+                            if (options.Mode == CompressionMode.Extreme)
+                            {
+                                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                            }
+                        }
+                        else
                         {
-                            var prepared = await pendingBlocks.Dequeue().ConfigureAwait(false);
-                            await ProcessCompletedBlockAsync(prepared).ConfigureAwait(false);
+                            var currentHash = blockHash;
+                            var dataToCompress = blockData;
+                            var rentedToReturn = rentedBlockData;
+                            var lengthToCompress = bytesRead;
+                            pendingBlocks.Enqueue(Task.Run(() =>
+                            {
+                                try
+                                {
+                                    var (outputMethod, outputBytes, isRaw, isBcj) = SelectAndCompressBlock(relativePath, options, dataToCompress, lengthToCompress);
+                                    return new PreparedIndependentBlock(fileEntry, lengthToCompress, outputMethod, outputBytes, isRaw)
+                                    {
+                                        OriginalSha256 = currentHash,
+                                        IsBcj = isBcj
+                                    };
+                                }
+                                finally
+                                {
+                                    if (rentedToReturn is not null)
+                                    {
+                                        System.Buffers.ArrayPool<byte>.Shared.Return(rentedToReturn);
+                                    }
+                                }
+                            }, cancellationToken));
+
+                            if (pendingBlocks.Count >= maxPendingBlocks)
+                            {
+                                var prepared = await pendingBlocks.Dequeue().ConfigureAwait(false);
+                                await ProcessCompletedBlockAsync(prepared).ConfigureAwait(false);
+                            }
                         }
                     }
+
+                    processedBytes += bytesRead;
+
+                    progress?.Report(new ArchiveOperationProgress
+                    {
+                        CurrentItem = sourceEntry.RelativePath,
+                        ProcessedBytes = processedBytes,
+                        TotalBytes = totalBytes,
+                        Percent = totalBytes == 0 ? 100 : (double)processedBytes / totalBytes * 100d
+                    });
                 }
-
-                processedBytes += bytesRead;
-
-                progress?.Report(new ArchiveOperationProgress
-                {
-                    CurrentItem = sourceEntry.RelativePath,
-                    ProcessedBytes = processedBytes,
-                    TotalBytes = totalBytes,
-                    Percent = totalBytes == 0 ? 100 : (double)processedBytes / totalBytes * 100d
-                });
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
             }
 
             fileEntry.FileChecksum = incrementalHash.GetHashAndReset();
@@ -557,10 +594,12 @@ public sealed class ArchiveWriter
         long processedBytes = 0;
         long solidStreamOffset = 0;
         long blockStreamOffset = 0;
-        var solidBuffer = new byte[options.BlockSizeBytes];
+        var solidBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(options.BlockSizeBytes);
         var solidBufferLength = 0;
         var blockHintPath = string.Empty;
-        var readBuffer = new byte[Math.Min(options.BlockSizeBytes, 256 * 1024)];
+        var readBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Min(options.BlockSizeBytes, 256 * 1024));
+        try
+        {
         var pendingBlocks = new Queue<Task<PreparedSolidBlock>>();
         var maxPendingBlocks = Math.Max(1, options.Threads);
 
@@ -603,7 +642,7 @@ public sealed class ArchiveWriter
                 var consumed = 0;
                 while (consumed < bytesRead)
                 {
-                    var toCopy = Math.Min(solidBuffer.Length - solidBufferLength, bytesRead - consumed);
+                    var toCopy = Math.Min(options.BlockSizeBytes - solidBufferLength, bytesRead - consumed);
                     readBuffer.AsSpan(consumed, toCopy).CopyTo(solidBuffer.AsSpan(solidBufferLength, toCopy));
                     blockHintPath = sourceEntry.RelativePath;
                     solidBufferLength += toCopy;
@@ -612,7 +651,7 @@ public sealed class ArchiveWriter
                     fileEntry.OriginalSize += toCopy;
                     processedBytes += toCopy;
 
-                    if (solidBufferLength == solidBuffer.Length)
+                    if (solidBufferLength == options.BlockSizeBytes)
                     {
                         var blockId = blockEntries.Count + pendingBlocks.Count;
                         var hintPath = blockHintPath;
@@ -633,9 +672,18 @@ public sealed class ArchiveWriter
                         }
                         else
                         {
-                            var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
+                            var blockData = System.Buffers.ArrayPool<byte>.Shared.Rent(solidBufferLength);
+                            solidBuffer.AsSpan(0, solidBufferLength).CopyTo(blockData);
+                            var lengthToCompress = solidBufferLength;
+                            var rentedToReturn = blockData;
                             pendingBlocks.Enqueue(Task.Run(
-                                () => PrepareSolidBlock(blockId, hintPath, options, blockData, blockData.Length, streamOffset),
+                                () => {
+                                    try {
+                                        return PrepareSolidBlock(blockId, hintPath, options, blockData, lengthToCompress, streamOffset);
+                                    } finally {
+                                        System.Buffers.ArrayPool<byte>.Shared.Return(rentedToReturn);
+                                    }
+                                },
                                 cancellationToken));
                             if (pendingBlocks.Count >= maxPendingBlocks)
                             {
@@ -683,9 +731,18 @@ public sealed class ArchiveWriter
             }
             else
             {
-                var blockData = solidBuffer.AsSpan(0, solidBufferLength).ToArray();
+                var blockData = System.Buffers.ArrayPool<byte>.Shared.Rent(solidBufferLength);
+                solidBuffer.AsSpan(0, solidBufferLength).CopyTo(blockData);
+                var lengthToCompress = solidBufferLength;
+                var rentedToReturn = blockData;
                 pendingBlocks.Enqueue(Task.Run(
-                    () => PrepareSolidBlock(blockId, hintPath, options, blockData, blockData.Length, streamOffset),
+                    () => {
+                        try {
+                            return PrepareSolidBlock(blockId, hintPath, options, blockData, lengthToCompress, streamOffset);
+                        } finally {
+                            System.Buffers.ArrayPool<byte>.Shared.Return(rentedToReturn);
+                        }
+                    },
                     cancellationToken));
             }
         }
@@ -702,6 +759,12 @@ public sealed class ArchiveWriter
         }
 
         FinalizeSolidFileEntries(fileEntries, blockEntries);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(solidBuffer);
+            System.Buffers.ArrayPool<byte>.Shared.Return(readBuffer);
+        }
     }
 
     private PreparedSolidBlock PrepareSolidBlock(
@@ -880,55 +943,68 @@ public sealed class ArchiveWriter
         }
 
         bool applyBcj = IsExecutable(relativePath);
+        byte[]? rentedBcj = null;
         byte[] processedBuffer = blockBuffer;
         if (applyBcj)
         {
-            processedBuffer = new byte[blockLength];
-            blockData.CopyTo(processedBuffer);
-            BcjFilter.EncodeX86(processedBuffer);
-        }
-        var processedData = processedBuffer.AsSpan(0, blockLength);
-
-        ReadOnlySpan<byte> sample = options.Mode == CompressionMode.Extreme
-            ? BuildExtremeSample(processedData)
-            : processedData[..Math.Min(processedData.Length, 64 * 1024)];
-        var analysis = _adaptiveCompressionEngine.Analyze(relativePath, sample);
-        var bestMethod = SelectPreferredMethod(options, analysis, sample);
-        if (bestMethod == CompressionMethod.LzmaMax &&
-            options.Mode == CompressionMode.Extreme &&
-            (blockLength > 32 * 1024 * 1024 ||
-             options.LzmaDictionarySizeBytes is > 8 * 1024 * 1024))
-        {
-            bestMethod = CompressionMethod.ZstdHigh;
-        }
-        if (bestMethod == CompressionMethod.Raw &&
-            options.Mode == CompressionMode.Extreme &&
-            options.ZstdForceLongDistanceTrial)
-        {
-            bestMethod = CompressionMethod.ZstdHigh;
+            rentedBcj = System.Buffers.ArrayPool<byte>.Shared.Rent(blockLength);
+            blockData.CopyTo(rentedBcj);
+            BcjFilter.EncodeX86(rentedBcj.AsSpan(0, blockLength));
+            processedBuffer = rentedBcj;
         }
 
-        if (bestMethod == CompressionMethod.Raw)
-        {
-            return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true, false);
-        }
-
-        byte[] compressed;
         try
         {
-            compressed = CompressBlock(bestMethod, processedData, options);
-        }
-        catch
-        {
-            return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true, false);
-        }
+            var processedData = processedBuffer.AsSpan(0, blockLength);
 
-        if (compressed.Length >= blockData.Length)
-        {
-            return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true, false);
-        }
+            ReadOnlySpan<byte> sample = options.Mode == CompressionMode.Extreme
+                ? BuildExtremeSample(processedData)
+                : processedData[..Math.Min(processedData.Length, 64 * 1024)];
+            var analysis = _adaptiveCompressionEngine.Analyze(relativePath, sample);
+            var bestMethod = SelectPreferredMethod(options, analysis, sample);
+            if (bestMethod == CompressionMethod.LzmaMax &&
+                options.Mode == CompressionMode.Extreme &&
+                (blockLength > 32 * 1024 * 1024 ||
+                 options.LzmaDictionarySizeBytes is > 8 * 1024 * 1024))
+            {
+                bestMethod = CompressionMethod.ZstdHigh;
+            }
+            if (bestMethod == CompressionMethod.Raw &&
+                options.Mode == CompressionMode.Extreme &&
+                options.ZstdForceLongDistanceTrial)
+            {
+                bestMethod = CompressionMethod.ZstdHigh;
+            }
 
-        return (bestMethod, compressed, false, applyBcj);
+            if (bestMethod == CompressionMethod.Raw)
+            {
+                return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true, false);
+            }
+
+            byte[] compressed;
+            try
+            {
+                compressed = CompressBlock(bestMethod, processedData, options);
+            }
+            catch
+            {
+                return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true, false);
+            }
+
+            if (compressed.Length >= blockData.Length)
+            {
+                return (CompressionMethod.Raw, GetRawBlockBytes(blockBuffer, blockLength), true, false);
+            }
+
+            return (bestMethod, compressed, false, applyBcj);
+        }
+        finally
+        {
+            if (rentedBcj is not null)
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rentedBcj);
+            }
+        }
     }
 
     private static byte[] GetRawBlockBytes(byte[] blockBuffer, int blockLength)

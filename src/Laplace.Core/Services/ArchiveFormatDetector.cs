@@ -110,7 +110,7 @@ public static class ArchiveFormatDetector
     private static bool LooksLikeLpc(string archivePath)
     {
         Span<byte> magic = stackalloc byte[4];
-        return TryReadMagic(archivePath, magic) && Encoding.ASCII.GetString(magic) == ArchiveHeader.Magic;
+        return TryReadMagic(archivePath, magic) && magic.SequenceEqual("LPC1"u8);
     }
 
     private static bool LooksLikeZip(string archivePath)

@@ -47,8 +47,7 @@ public static class ChecksumService
     public static byte[] ComputeSha256(Stream stream)
     {
         stream.Position = 0;
-        using var sha = SHA256.Create();
-        return sha.ComputeHash(stream);
+        return SHA256.HashData(stream);
     }
 
     private static readonly uint[] Crc32CTable = BuildCrc32CTable();
