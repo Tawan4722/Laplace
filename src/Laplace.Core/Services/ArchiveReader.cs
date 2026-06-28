@@ -25,11 +25,9 @@ public sealed class ArchiveReader
             try
             {
                 stream.Position = header.FileTableOffset;
-                var filePayload = ArchiveFormatCodec.DecodeEncryptedTablePayload(
-                    ArchiveFormatCodec.ReadEncryptedTable(stream, "file table"));
+                var filePayload = ArchiveFormatCodec.ReadEncryptedTable(stream, "file table");
                 stream.Position = header.BlockTableOffset;
-                var blockPayload = ArchiveFormatCodec.DecodeEncryptedTablePayload(
-                    ArchiveFormatCodec.ReadEncryptedTable(stream, "block table"));
+                var blockPayload = ArchiveFormatCodec.ReadEncryptedTable(stream, "block table");
                 byte[] filePlaintext = [];
                 byte[] blockPlaintext = [];
                 try

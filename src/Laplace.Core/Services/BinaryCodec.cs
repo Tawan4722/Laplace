@@ -9,9 +9,26 @@ internal static class BinaryCodec
 
     public static void WriteUtf8String(BinaryWriter writer, string value)
     {
-        var bytes = Encoding.UTF8.GetBytes(value);
-        writer.Write(bytes.Length);
-        writer.Write(bytes);
+        if (value.Length == 0)
+        {
+            writer.Write(0);
+            return;
+        }
+
+        var byteCount = Encoding.UTF8.GetByteCount(value);
+        writer.Write(byteCount);
+
+        if (byteCount <= 1024)
+        {
+            Span<byte> buffer = stackalloc byte[1024];
+            Encoding.UTF8.GetBytes(value, buffer);
+            writer.Write(buffer[..byteCount]);
+        }
+        else
+        {
+            var bytes = Encoding.UTF8.GetBytes(value);
+            writer.Write(bytes);
+        }
     }
 
     public static string ReadUtf8String(BinaryReader reader)
@@ -26,13 +43,36 @@ internal static class BinaryCodec
             throw new InvalidDataException($"String length {length} exceeds supported maximum.");
         }
 
-        var bytes = reader.ReadBytes(length);
-        if (bytes.Length != length)
+        if (length == 0)
         {
-            throw new EndOfStreamException("Unexpected end of stream while reading UTF-8 string.");
+            return string.Empty;
         }
 
-        return Encoding.UTF8.GetString(bytes);
+        if (length <= 1024)
+        {
+            Span<byte> buffer = stackalloc byte[1024];
+            var slice = buffer[..length];
+            int totalRead = 0;
+            while (totalRead < length)
+            {
+                var read = reader.Read(slice[totalRead..]);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException("Unexpected end of stream while reading UTF-8 string.");
+                }
+                totalRead += read;
+            }
+            return Encoding.UTF8.GetString(slice);
+        }
+        else
+        {
+            var bytes = reader.ReadBytes(length);
+            if (bytes.Length != length)
+            {
+                throw new EndOfStreamException("Unexpected end of stream while reading UTF-8 string.");
+            }
+            return Encoding.UTF8.GetString(bytes);
+        }
     }
 
     public static uint ComputeHeaderChecksum(ReadOnlySpan<byte> headerWithoutChecksum)

@@ -210,7 +210,7 @@ internal static class ArchiveFormatCodec
         writer.Write(payload.Ciphertext);
     }
 
-    public static byte[] ReadEncryptedTable(Stream stream, string tableName)
+    public static EncryptedPayload ReadEncryptedTable(Stream stream, string tableName)
     {
         using var reader = new BinaryReader(stream, Encoding.UTF8, true);
         var ciphertextLength = reader.ReadInt32();
@@ -235,25 +235,7 @@ internal static class ArchiveFormatCodec
             throw new EndOfStreamException($"Unexpected end of stream while reading encrypted {tableName}.");
         }
 
-        using var payload = new MemoryStream();
-        using var writer = new BinaryWriter(payload, Encoding.UTF8, true);
-        writer.Write(nonce.Length);
-        writer.Write(nonce);
-        writer.Write(tag.Length);
-        writer.Write(tag);
-        writer.Write(ciphertext.Length);
-        writer.Write(ciphertext);
-        return payload.ToArray();
-    }
-
-    public static (byte[] Nonce, byte[] Tag, byte[] Ciphertext) DecodeEncryptedTablePayload(byte[] payload)
-    {
-        using var stream = new MemoryStream(payload, writable: false);
-        using var reader = new BinaryReader(stream, Encoding.UTF8, true);
-        var nonce = reader.ReadBytes(reader.ReadInt32());
-        var tag = reader.ReadBytes(reader.ReadInt32());
-        var ciphertext = reader.ReadBytes(reader.ReadInt32());
-        return (nonce, tag, ciphertext);
+        return new EncryptedPayload(ciphertext, nonce, tag);
     }
 
     public static void WriteFileEntries(Stream stream, IReadOnlyList<FileEntryRecord> entries, ushort formatVersion = 8)
