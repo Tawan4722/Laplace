@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private PasswordContext? _currentPassword;
     private ArchiveSummary? _currentSummary;
     private CancellationTokenSource? _operationCancellation;
+    private bool _isMinimalMode;
 
     public MainWindow(string[] args)
     {
@@ -467,6 +468,7 @@ public partial class MainWindow : Window
         {
             var archivePath = Path.GetFullPath(args[1]);
             var targetDir = Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory();
+            EnableMinimalMode("Extracting Archive");
             await LoadArchiveAsync(archivePath, null);
             if (_currentArchivePath is not null)
             {
@@ -495,6 +497,7 @@ public partial class MainWindow : Window
         {
             var archivePath = Path.GetFullPath(args[1]);
             var folder = Path.Combine(Path.GetDirectoryName(archivePath) ?? Directory.GetCurrentDirectory(), Path.GetFileNameWithoutExtension(archivePath));
+            EnableMinimalMode("Extracting Archive");
             await LoadArchiveAsync(archivePath, null);
             if (_currentArchivePath is not null)
             {
@@ -522,6 +525,7 @@ public partial class MainWindow : Window
         if (string.Equals(first, "--test", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
         {
             var archivePath = Path.GetFullPath(args[1]);
+            EnableMinimalMode("Verifying Archive");
             await LoadArchiveAsync(archivePath, null);
             if (_currentArchivePath is not null)
             {
@@ -554,6 +558,7 @@ public partial class MainWindow : Window
         if (string.Equals(first, "--repair", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
         {
             var archivePath = Path.GetFullPath(args[1]);
+            EnableMinimalMode("Repairing Archive");
             if (File.Exists(archivePath))
             {
                 var completed = await RunOperationAsync(
@@ -590,6 +595,7 @@ public partial class MainWindow : Window
         if (string.Equals(first, "--compress-beside", StringComparison.OrdinalIgnoreCase) && args.Length > 1)
         {
             var inputPath = Path.GetFullPath(args[1]);
+            EnableMinimalMode("Compressing...");
             var mode = CompressionMode.Balanced;
             var verify = false;
             for (var i = 2; i < args.Length; i++)
@@ -717,8 +723,26 @@ public partial class MainWindow : Window
             : $"{summary.FileCount} files, {summary.FolderCount} folders, {FormatBytes(summary.CompressedSize)} packed";
     }
 
+    private void EnableMinimalMode(string title)
+    {
+        _isMinimalMode = true;
+        Title = title;
+        Width = 440;
+        Height = 180;
+        ResizeMode = ResizeMode.NoResize;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        
+        MainLayout.Visibility = Visibility.Collapsed;
+        MinimalProgressPanel.Visibility = Visibility.Visible;
+    }
+
     private void SetBusy(bool busy, bool canCancel = false)
     {
+        if (_isMinimalMode)
+        {
+            return;
+        }
+
         OperationOverlay.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         OperationProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.Visibility = busy && canCancel ? Visibility.Visible : Visibility.Collapsed;
@@ -734,6 +758,13 @@ public partial class MainWindow : Window
         OperationProgress.Value = Math.Clamp(percent, 0, 100);
         OverlayMessage.Text = message;
         OverlayProgress.Value = Math.Clamp(percent, 0, 100);
+
+        if (_isMinimalMode)
+        {
+            MinimalStatusText.Text = message;
+            MinimalProgressBar.Value = Math.Clamp(percent, 0, 100);
+            MinimalDetailText.Text = $"{Math.Clamp(percent, 0, 100)}% completed";
+        }
     }
 
     private PasswordContext? PromptForPassword(string title, string archivePath, string description, bool isError = false)
