@@ -2,6 +2,10 @@
 
 All notable changes to Laplace will be documented here.
 
+## 2.2.7 - 2026-06-28
+
+- Redesigned the Windows File Explorer right-click context menu branding to use the Laplace icon for every menu verb, matching WinRAR's consistent and professional shell styling.
+
 ## 2.2.6 - 2026-06-28
 
 - Implemented project-wide performance and allocation optimizations, resulting in a **10.7x speedup** in the compression benchmark.

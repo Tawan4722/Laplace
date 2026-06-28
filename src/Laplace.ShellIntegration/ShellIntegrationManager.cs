@@ -131,15 +131,15 @@ public sealed class ShellIntegrationManager
         ConfigureCascadeRoot(menuKey, quotedGui);
 
         RegisterCascadeVerb(menuKey, "open", "Open Archive", $"{quotedGui} --open \"%1\"", quotedGui);
-        RegisterCascadeVerb(menuKey, "extract_here", "Extract Here", $"{quotedGui} --extract-here \"%1\"", "shell32.dll,277");
-        RegisterCascadeVerb(menuKey, "extract_options", "Extract Files...", $"{quotedGui} --extract \"%1\"", "shell32.dll,277");
-        RegisterCascadeVerb(menuKey, "extract_named", "Extract to Subfolder", $"{quotedGui} --extract-to-named-folder \"%1\"", "shell32.dll,277");
-        RegisterCascadeVerb(menuKey, "test_archive", "Verify Integrity", $"{quotedGui} --test \"%1\"", "shell32.dll,112");
-        RegisterCascadeVerb(menuKey, "repair_archive", "Repair Archive...", $"{quotedGui} --repair \"%1\"", "shell32.dll,46");
-        RegisterCascadeVerb(menuKey, "archive_info", "Archive Information", $"{quotedGui} --info \"%1\"", "shell32.dll,22");
+        RegisterCascadeVerb(menuKey, "extract_here", "Extract Here", $"{quotedGui} --extract-here \"%1\"", quotedGui);
+        RegisterCascadeVerb(menuKey, "extract_options", "Extract Files...", $"{quotedGui} --extract \"%1\"", quotedGui);
+        RegisterCascadeVerb(menuKey, "extract_named", "Extract to Subfolder", $"{quotedGui} --extract-to-named-folder \"%1\"", quotedGui);
+        RegisterCascadeVerb(menuKey, "test_archive", "Verify Integrity", $"{quotedGui} --test \"%1\"", quotedGui);
+        RegisterCascadeVerb(menuKey, "repair_archive", "Repair Archive...", $"{quotedGui} --repair \"%1\"", quotedGui);
+        RegisterCascadeVerb(menuKey, "archive_info", "Archive Information", $"{quotedGui} --info \"%1\"", quotedGui);
         if (includeIsoDriveVerb)
         {
-            RegisterCascadeVerb(menuKey, "iso_to_drive", "Extract ISO to removable drive...", $"{quotedGui} --iso-to-drive \"%1\"", "shell32.dll,277");
+            RegisterCascadeVerb(menuKey, "iso_to_drive", "Extract ISO to removable drive...", $"{quotedGui} --iso-to-drive \"%1\"", quotedGui);
         }
     }
 
@@ -169,10 +169,10 @@ public sealed class ShellIntegrationManager
         return
         [
             new("create_options", "Add to Archive...", $"{quotedGui} --add \"{targetPlaceholder}\"", quotedGui),
-            new("create_quick", "Compress to .lpc", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced", "shell32.dll,262"),
-            new("create_quick_verified", "Compress & Verify (.lpc)", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced --verify", "shell32.dll,112"),
-            new("create_ultra_ratio", "Compress with Extreme Ratio", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode extreme --verify", "shell32.dll,262"),
-            new("estimate", "Estimate Size", $"{quotedGui} --estimate \"{targetPlaceholder}\"", "shell32.dll,271")
+            new("create_quick", "Compress to .lpc", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced", quotedGui),
+            new("create_quick_verified", "Compress & Verify (.lpc)", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced --verify", quotedGui),
+            new("create_ultra_ratio", "Compress with Extreme Ratio", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode extreme --verify", quotedGui),
+            new("estimate", "Estimate Size", $"{quotedGui} --estimate \"{targetPlaceholder}\"", quotedGui)
         ];
     }
 
