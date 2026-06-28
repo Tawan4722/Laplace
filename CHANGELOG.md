@@ -2,6 +2,12 @@
 
 All notable changes to Laplace will be documented here.
 
+## 2.2.5 - 2026-06-28
+
+- Implemented `ArrayPool<byte>.Shared` buffer pooling in compression and extraction paths, reducing heap allocations and GC pressure.
+- Redesigned the Windows File Explorer right-click context menu with cleaner, more professional labels and native system icons.
+- Added a specific compression algorithm selection setting to the WPF GUI and core options.
+
 ## 2.2.4 - 2026-06-24
 
 - Reintegrated `Laplace.SfxStub` back into the main `Laplace.sln` solution file.

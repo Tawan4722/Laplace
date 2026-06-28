@@ -45,6 +45,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Output -->
@@ -56,38 +57,42 @@
             <TextBlock Text="Mode" VerticalAlignment="Center" Grid.Row="1" Margin="0,8,0,0"/>
             <ComboBox x:Name="ModeCombo" Grid.Column="1" Grid.Row="1" Margin="8,8,8,0" SelectionChanged="ModeCombo_SelectionChanged" HorizontalAlignment="Left" Width="180"/>
 
+            <!-- Algorithm -->
+            <TextBlock Text="Algorithm" VerticalAlignment="Center" Grid.Row="2" Margin="0,8,0,0"/>
+            <ComboBox x:Name="AlgorithmCombo" Grid.Column="1" Grid.Row="2" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
+
             <!-- Block size -->
-            <TextBlock Text="Block size" VerticalAlignment="Center" Grid.Row="2" Margin="0,8,0,0"/>
-            <ComboBox x:Name="BlockSizeCombo" Grid.Column="1" Grid.Row="2" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180" SelectionChanged="BlockSizeCombo_SelectionChanged"/>
+            <TextBlock Text="Block size" VerticalAlignment="Center" Grid.Row="3" Margin="0,8,0,0"/>
+            <ComboBox x:Name="BlockSizeCombo" Grid.Column="1" Grid.Row="3" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180" SelectionChanged="BlockSizeCombo_SelectionChanged"/>
 
             <!-- Solid -->
-            <TextBlock Text="Solid" VerticalAlignment="Center" Grid.Row="3" Margin="0,8,0,0"/>
-            <ComboBox x:Name="SolidCombo" Grid.Column="1" Grid.Row="3" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
+            <TextBlock Text="Solid" VerticalAlignment="Center" Grid.Row="4" Margin="0,8,0,0"/>
+            <ComboBox x:Name="SolidCombo" Grid.Column="1" Grid.Row="4" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
 
             <!-- Threads -->
-            <TextBlock Text="Threads" VerticalAlignment="Center" Grid.Row="4" Margin="0,8,0,0"/>
-            <TextBox x:Name="ThreadsInput" Grid.Column="1" Grid.Row="4" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
+            <TextBlock Text="Threads" VerticalAlignment="Center" Grid.Row="5" Margin="0,8,0,0"/>
+            <TextBox x:Name="ThreadsInput" Grid.Column="1" Grid.Row="5" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
 
             <!-- Password -->
-            <TextBlock Text="Password" VerticalAlignment="Center" Grid.Row="5" Margin="0,8,0,0"/>
-            <PasswordBox x:Name="PasswordInput" Grid.Column="1" Grid.Row="5" Margin="8,8,8,0" HorizontalAlignment="Left" Width="220"/>
+            <TextBlock Text="Password" VerticalAlignment="Center" Grid.Row="6" Margin="0,8,0,0"/>
+            <PasswordBox x:Name="PasswordInput" Grid.Column="1" Grid.Row="6" Margin="8,8,8,0" HorizontalAlignment="Left" Width="220"/>
 
             <!-- Confirm -->
-            <TextBlock Text="Confirm" VerticalAlignment="Center" Grid.Row="6" Margin="0,8,0,0"/>
-            <PasswordBox x:Name="ConfirmPasswordInput" Grid.Column="1" Grid.Row="6" Margin="8,8,8,0" HorizontalAlignment="Left" Width="220"/>
+            <TextBlock Text="Confirm" VerticalAlignment="Center" Grid.Row="7" Margin="0,8,0,0"/>
+            <PasswordBox x:Name="ConfirmPasswordInput" Grid.Column="1" Grid.Row="7" Margin="8,8,8,0" HorizontalAlignment="Left" Width="220"/>
 
             <!-- Recovery -->
-            <TextBlock Text="Recovery %" VerticalAlignment="Center" Grid.Row="7" Margin="0,8,0,0"/>
-            <TextBox x:Name="RecoveryInput" Grid.Column="1" Grid.Row="7" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
+            <TextBlock Text="Recovery %" VerticalAlignment="Center" Grid.Row="8" Margin="0,8,0,0"/>
+            <TextBox x:Name="RecoveryInput" Grid.Column="1" Grid.Row="8" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
 
             <!-- Volume size -->
-            <TextBlock Text="Volume size" VerticalAlignment="Center" Grid.Row="8" Margin="0,8,0,0"/>
-            <ComboBox x:Name="VolumeSizeCombo" Grid.Column="1" Grid.Row="8" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
+            <TextBlock Text="Volume size" VerticalAlignment="Center" Grid.Row="9" Margin="0,8,0,0"/>
+            <ComboBox x:Name="VolumeSizeCombo" Grid.Column="1" Grid.Row="9" Margin="8,8,8,0" HorizontalAlignment="Left" Width="180"/>
 
             <!-- Checkboxes -->
-            <CheckBox x:Name="VerifyCheck" Content="Verify after archiving" Grid.Column="1" Grid.Row="9" Margin="8,16,0,0" IsChecked="True"/>
-            <CheckBox x:Name="EncryptCheck" Content="Encrypt" Grid.Column="2" Grid.Row="9" Margin="8,16,0,0"/>
-            <CheckBox x:Name="HideNamesCheck" Content="Hide names" Grid.Column="2" Grid.Row="10" Margin="8,8,0,0" Checked="HideNamesCheck_Checked"/>
+            <CheckBox x:Name="VerifyCheck" Content="Verify after archiving" Grid.Column="1" Grid.Row="10" Margin="8,16,0,0" IsChecked="True"/>
+            <CheckBox x:Name="EncryptCheck" Content="Encrypt" Grid.Column="2" Grid.Row="10" Margin="8,16,0,0"/>
+            <CheckBox x:Name="HideNamesCheck" Content="Hide names" Grid.Column="2" Grid.Row="11" Margin="8,8,0,0" Checked="HideNamesCheck_Checked"/>
         </Grid>
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="2">

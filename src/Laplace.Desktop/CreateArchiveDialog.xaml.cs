@@ -27,6 +27,9 @@ public partial class CreateArchiveDialog : Window
         BlockSizeCombo.ItemsSource = new[] { "8M", "4M", "16M", "32M", "64M" };
         BlockSizeCombo.SelectedIndex = 0;
 
+        AlgorithmCombo.ItemsSource = new[] { "Auto", "LZ4 Fast", "Zstd Fast", "Zstd Balanced", "Zstd High", "LZMA", "Deflate", "Blosc2" };
+        AlgorithmCombo.SelectedIndex = 0;
+
         SolidCombo.ItemsSource = new[] { "Auto", "On", "Off" };
         SolidCombo.SelectedIndex = 0;
 
@@ -50,6 +53,7 @@ public partial class CreateArchiveDialog : Window
     public CreateArchiveOptions CreateOptions => new()
     {
         Mode = ParseMode(ModeCombo.SelectedItem?.ToString() ?? "Balanced"),
+        ForceAlgorithm = ParseForceAlgorithm(AlgorithmCombo.SelectedItem?.ToString() ?? "Auto"),
         BlockSizeBytes = ParseBlockSize(BlockSizeCombo.SelectedItem?.ToString() ?? "8M"),
         BlockSizeExplicitlySet = _blockSizeChanged && !(ModeCombo.SelectedItem?.ToString()?.Equals("Extreme", StringComparison.OrdinalIgnoreCase) ?? false),
         SolidMode = ParseSolidMode(SolidCombo.SelectedItem?.ToString() ?? "Auto"),
@@ -147,6 +151,20 @@ public partial class CreateArchiveDialog : Window
         }
     }
 
+    private static CompressionMethod? ParseForceAlgorithm(string value)
+    {
+        return value switch
+        {
+            "LZ4 Fast" => CompressionMethod.Lz4Fast,
+            "Zstd Fast" => CompressionMethod.ZstdFast,
+            "Zstd Balanced" => CompressionMethod.ZstdBalanced,
+            "Zstd High" => CompressionMethod.ZstdHigh,
+            "LZMA" => CompressionMethod.LzmaMax,
+            "Deflate" => CompressionMethod.DeflateFallback,
+            "Blosc2" => CompressionMethod.Blosc2,
+            _ => null
+        };
+    }
     private void HideNamesCheck_Checked(object sender, RoutedEventArgs e)
     {
         if (HideNamesCheck.IsChecked == true && EncryptCheck != null)

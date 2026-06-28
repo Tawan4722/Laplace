@@ -1009,9 +1009,7 @@ public sealed class ArchiveWriter
 
     private static byte[] GetRawBlockBytes(byte[] blockBuffer, int blockLength)
     {
-        return blockLength == blockBuffer.Length
-            ? blockBuffer
-            : blockBuffer.AsSpan(0, blockLength).ToArray();
+        return blockBuffer.AsSpan(0, blockLength).ToArray();
     }
 
     private IBlockCompressor GetCompressorForCompression(CompressionMethod method, CreateArchiveOptions options)
@@ -1055,6 +1053,11 @@ public sealed class ArchiveWriter
         CompressionAnalysis analysis,
         ReadOnlySpan<byte> sample)
     {
+        if (options.ForceAlgorithm is { } forced)
+        {
+            return forced;
+        }
+
         var mode = options.Mode;
         if (mode == CompressionMode.Fast)
         {

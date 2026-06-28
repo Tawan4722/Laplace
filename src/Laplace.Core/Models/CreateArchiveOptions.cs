@@ -16,6 +16,7 @@ public sealed class CreateArchiveOptions
     public const int MaximumArgon2Parallelism = 64;
 
     public CompressionMode Mode { get; set; } = CompressionMode.Balanced;
+    public CompressionMethod? ForceAlgorithm { get; set; }
     public int BlockSizeBytes { get; set; } = 8 * 1024 * 1024;
     public bool BlockSizeExplicitlySet { get; set; }
     public SolidMode SolidMode { get; set; } = SolidMode.Auto;

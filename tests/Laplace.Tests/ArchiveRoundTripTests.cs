@@ -452,7 +452,7 @@ public sealed class ArchiveRoundTripTests
     public void UltraRatioShellVerb_UsesExtremeVerifiedCompression(string targetPlaceholder)
     {
         var verbs = ShellIntegrationManager.BuildCreateVerbs("\"laplace.exe\"", "\"laplace-gui.exe\"", targetPlaceholder);
-        var ultra = Assert.Single(verbs, verb => verb.Title == "Ultra Ratio");
+        var ultra = Assert.Single(verbs, verb => verb.Title == "Compress with Extreme Ratio");
 
         Assert.Equal("create_ultra_ratio", ultra.Name);
         Assert.Equal($"\"laplace-gui.exe\" --compress-beside \"{targetPlaceholder}\" --mode extreme --verify", ultra.Command);
@@ -2314,6 +2314,39 @@ public sealed class ArchiveRoundTripTests
             var header = new ArchiveReader().ReadHeaderOnly(archivePath);
             Assert.Equal(8, header.FormatVersion);
             Assert.Equal(testJson, header.OptionalHeaderMetadataJson);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public async Task Compress_WithForceAlgorithm_UsesForcedAlgorithm()
+    {
+        var root = CreateTempFolder();
+        try
+        {
+            var sourceFile = Path.Combine(root, "test.txt");
+            var content = string.Join(" ", Enumerable.Repeat("Force algorithm test content. Let's make sure it is long enough to be compressed.", 1000));
+            await File.WriteAllTextAsync(sourceFile, content);
+            var archivePath = Path.Combine(root, "force.lpc");
+            
+            var registry = new CompressorRegistry();
+            var service = new ArchiveWriter(registry);
+
+            await service.CreateAsync([sourceFile], archivePath, new CreateArchiveOptions
+            {
+                VerifyAfterCompression = false,
+                ForceAlgorithm = CompressionMethod.LzmaMax
+            });
+
+            var archive = new ArchiveReader().Read(archivePath);
+            Assert.NotEmpty(archive.BlockEntries);
+            foreach (var block in archive.BlockEntries)
+            {
+                Assert.Equal(CompressionMethod.LzmaMax, block.CompressionMethod);
+            }
         }
         finally
         {

@@ -130,17 +130,16 @@ public sealed class ShellIntegrationManager
         using var menuKey = classes.CreateSubKey(keyPath, writable: true);
         ConfigureCascadeRoot(menuKey, quotedGui);
 
-        RegisterCascadeVerb(menuKey, "open", "Open in Laplace", $"{quotedGui} --open \"%1\"");
-        RegisterCascadeVerb(menuKey, "extract_options", "Extract with options...", $"{quotedGui} --extract \"%1\"");
-        RegisterCascadeVerb(menuKey, "extract_here", "Extract here", $"{quotedGui} --extract-here \"%1\"");
-        RegisterCascadeVerb(menuKey, "extract_named", "Extract to archive-named folder", $"{quotedGui} --extract-to-named-folder \"%1\"");
-        RegisterCascadeVerb(menuKey, "test_archive", "Test integrity", $"{quotedGui} --test \"%1\"");
-        RegisterCascadeVerb(menuKey, "find_archive", "Find in archive", $"{quotedGui} --open \"%1\"");
-        RegisterCascadeVerb(menuKey, "repair_archive", "Repair archive", $"{quotedGui} --repair \"%1\"");
-        RegisterCascadeVerb(menuKey, "archive_info", "Show archive details", $"{quotedGui} --info \"%1\"");
+        RegisterCascadeVerb(menuKey, "open", "Open Archive", $"{quotedGui} --open \"%1\"", quotedGui);
+        RegisterCascadeVerb(menuKey, "extract_here", "Extract Here", $"{quotedGui} --extract-here \"%1\"", "shell32.dll,277");
+        RegisterCascadeVerb(menuKey, "extract_options", "Extract Files...", $"{quotedGui} --extract \"%1\"", "shell32.dll,277");
+        RegisterCascadeVerb(menuKey, "extract_named", "Extract to Subfolder", $"{quotedGui} --extract-to-named-folder \"%1\"", "shell32.dll,277");
+        RegisterCascadeVerb(menuKey, "test_archive", "Verify Integrity", $"{quotedGui} --test \"%1\"", "shell32.dll,112");
+        RegisterCascadeVerb(menuKey, "repair_archive", "Repair Archive...", $"{quotedGui} --repair \"%1\"", "shell32.dll,46");
+        RegisterCascadeVerb(menuKey, "archive_info", "Archive Information", $"{quotedGui} --info \"%1\"", "shell32.dll,22");
         if (includeIsoDriveVerb)
         {
-            RegisterCascadeVerb(menuKey, "iso_to_drive", "Extract ISO to removable drive...", $"{quotedGui} --iso-to-drive \"%1\"");
+            RegisterCascadeVerb(menuKey, "iso_to_drive", "Extract ISO to removable drive...", $"{quotedGui} --iso-to-drive \"%1\"", "shell32.dll,277");
         }
     }
 
@@ -161,7 +160,7 @@ public sealed class ShellIntegrationManager
 
         foreach (var verb in BuildCreateVerbs(quotedCli, quotedGui, targetPlaceholder))
         {
-            RegisterCascadeVerb(menuKey, verb.Name, verb.Title, verb.Command);
+            RegisterCascadeVerb(menuKey, verb.Name, verb.Title, verb.Command, verb.Icon);
         }
     }
 
@@ -169,11 +168,11 @@ public sealed class ShellIntegrationManager
     {
         return
         [
-            new("estimate", "Estimate archive size", $"{quotedGui} --estimate \"{targetPlaceholder}\""),
-            new("create_options", "Create archive...", $"{quotedGui} --add \"{targetPlaceholder}\""),
-            new("create_quick", "Create .lpc beside item", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced"),
-            new("create_quick_verified", "Create verified .lpc", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced --verify"),
-            new("create_ultra_ratio", "Ultra Ratio", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode extreme --verify")
+            new("create_options", "Add to Archive...", $"{quotedGui} --add \"{targetPlaceholder}\"", quotedGui),
+            new("create_quick", "Compress to .lpc", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced", "shell32.dll,262"),
+            new("create_quick_verified", "Compress & Verify (.lpc)", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode balanced --verify", "shell32.dll,112"),
+            new("create_ultra_ratio", "Compress with Extreme Ratio", $"{quotedGui} --compress-beside \"{targetPlaceholder}\" --mode extreme --verify", "shell32.dll,262"),
+            new("estimate", "Estimate Size", $"{quotedGui} --estimate \"{targetPlaceholder}\"", "shell32.dll,271")
         ];
     }
 
@@ -186,10 +185,14 @@ public sealed class ShellIntegrationManager
         menuKey?.DeleteValue("SubCommands", throwOnMissingValue: false);
     }
 
-    private static void RegisterCascadeVerb(RegistryKey? menuKey, string verbName, string title, string command)
+    private static void RegisterCascadeVerb(RegistryKey? menuKey, string verbName, string title, string command, string? icon = null)
     {
         using var shell = menuKey?.CreateSubKey($@"shell\{verbName}", writable: true);
         shell?.SetValue("MUIVerb", title);
+        if (!string.IsNullOrEmpty(icon))
+        {
+            shell?.SetValue("Icon", icon);
+        }
         using var commandKey = shell?.CreateSubKey("command", writable: true);
         commandKey?.SetValue(string.Empty, command);
     }
@@ -259,4 +262,4 @@ public sealed class ShellIntegrationStatus
     public int RegisteredLaplaceVerbCount { get; init; }
 }
 
-internal sealed record ShellCreateVerb(string Name, string Title, string Command);
+internal sealed record ShellCreateVerb(string Name, string Title, string Command, string? Icon = null);
