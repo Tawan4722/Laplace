@@ -2,6 +2,15 @@
 
 All notable changes to Laplace will be documented here.
 
+## 2.2.6 - 2026-06-28
+
+- Implemented project-wide performance and allocation optimizations, resulting in a **10.7x speedup** in the compression benchmark.
+- Cached compiled regexes in `GlobFilter` to reduce file discovery filtering overhead.
+- Optimized UTF-8 string binary serialization/deserialization with stack-allocated byte spans (`stackalloc`) to eliminate heap allocations.
+- Streamlined encrypted table decoding by eliminating redundant intermediate byte array serialization.
+- Redesigned the desktop GUI to be extremely minimal and clean, matching the core toolbar actions of 7-Zip.
+- Added a compact, minimal progress window for background shell integration actions (such as *Extract Here*, *Verify*, *Repair*, and *Compress beside item*).
+
 ## 2.2.5 - 2026-06-28
 
 - Implemented `ArrayPool<byte>.Shared` buffer pooling in compression and extraction paths, reducing heap allocations and GC pressure.
