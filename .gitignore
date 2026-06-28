@@ -19,5 +19,3 @@ Setup.exe
 Setup.sha256.txt
 *.user
 .antigravitycli/
-.agents/
-AGENT.md
