@@ -54,16 +54,14 @@ public static class LpcSfxHelper
         {
             stream.Position = stream.Length - FooterSize;
             
-            var buffer = new byte[FooterSize];
-            int read = stream.Read(buffer, 0, FooterSize);
-            if (read < FooterSize)
-                return false;
+            Span<byte> buffer = stackalloc byte[FooterSize];
+            stream.ReadExactly(buffer);
 
             // Check signature in the last 8 bytes
-            if (!buffer.AsSpan(8).SequenceEqual("SFXLPC!!"u8))
+            if (!buffer[8..].SequenceEqual("SFXLPC!!"u8))
                 return false;
 
-            long offset = BitConverter.ToInt64(buffer, 0);
+            long offset = BitConverter.ToInt64(buffer);
             return offset > 0 && offset < stream.Length - FooterSize;
         }
         catch
@@ -94,9 +92,9 @@ public static class LpcSfxHelper
             if (IsSfxStream(fs))
             {
                 fs.Position = fs.Length - FooterSize;
-                var buffer = new byte[8];
-                fs.ReadExactly(buffer, 0, 8);
-                long offset = BitConverter.ToInt64(buffer, 0);
+                Span<byte> buffer = stackalloc byte[8];
+                fs.ReadExactly(buffer);
+                long offset = BitConverter.ToInt64(buffer);
                 long length = fs.Length - offset - FooterSize;
                 return new SubStream(fs, offset, length);
             }

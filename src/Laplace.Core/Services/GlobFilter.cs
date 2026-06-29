@@ -110,7 +110,7 @@ internal static class GlobFilter
 
                 if (isIncluded)
                 {
-                    survivingFiles.Add(entry.RelativePath);
+                    survivingFiles.Add(normalizedPath);
                 }
             }
         }
@@ -118,15 +118,16 @@ internal static class GlobFilter
         var result = new List<InputEntry>();
         foreach (var entry in entries)
         {
+            var normalizedPath = entry.RelativePath.Replace('\\', '/');
             if (entry.IsDirectory)
             {
-                var dirPrefix = entry.RelativePath.Replace('\\', '/').TrimEnd('/') + "/";
-                if (survivingFiles.Any(f => f.Replace('\\', '/').StartsWith(dirPrefix, StringComparison.OrdinalIgnoreCase)))
+                var dirPrefix = normalizedPath.TrimEnd('/') + "/";
+                if (survivingFiles.Any(f => f.StartsWith(dirPrefix, StringComparison.OrdinalIgnoreCase)))
                 {
                     result.Add(entry);
                 }
             }
-            else if (survivingFiles.Contains(entry.RelativePath))
+            else if (survivingFiles.Contains(normalizedPath))
             {
                 result.Add(entry);
             }

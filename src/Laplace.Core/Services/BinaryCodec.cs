@@ -52,25 +52,13 @@ internal static class BinaryCodec
         {
             Span<byte> buffer = stackalloc byte[1024];
             var slice = buffer[..length];
-            int totalRead = 0;
-            while (totalRead < length)
-            {
-                var read = reader.Read(slice[totalRead..]);
-                if (read == 0)
-                {
-                    throw new EndOfStreamException("Unexpected end of stream while reading UTF-8 string.");
-                }
-                totalRead += read;
-            }
+            reader.BaseStream.ReadExactly(slice);
             return Encoding.UTF8.GetString(slice);
         }
         else
         {
-            var bytes = reader.ReadBytes(length);
-            if (bytes.Length != length)
-            {
-                throw new EndOfStreamException("Unexpected end of stream while reading UTF-8 string.");
-            }
+            var bytes = new byte[length];
+            reader.BaseStream.ReadExactly(bytes);
             return Encoding.UTF8.GetString(bytes);
         }
     }
