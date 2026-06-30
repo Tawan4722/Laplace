@@ -1,4 +1,5 @@
 using Laplace.Core.Abstractions;
+using Laplace.Core.Compression;
 using Laplace.Core.Enums;
 using Laplace.Core.Exceptions;
 using Laplace.Core.Models;
@@ -76,44 +77,151 @@ public sealed class ArchiveTester
             else
             {
                 var blocksByFileId = ArchiveReader.BuildBlockLookup(archive);
-                foreach (var file in files)
+                var threads = Environment.ProcessorCount;
+                var sem = new SemaphoreSlim(threads);
+                var progressLock = new object();
+                var errorLock = new object();
+                string? firstErrorMessage = null;
+
+                Microsoft.Win32.SafeHandles.SafeFileHandle? archiveHandle = null;
+                long sfxOffset = 0;
+                bool useRandomAccess = false;
+
+                if (!ArchiveFormatDetector.IsUrl(archivePath) && !MultiVolumeStream.IsMultiVolumeFirstFile(archivePath, out _))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-
-                    if (!blocksByFileId.TryGetValue(file.EntryId, out var fileBlocks))
+                    try
                     {
-                        fileBlocks = [];
-                    }
-
-                    foreach (var block in fileBlocks)
-                    {
-                        var readBlock = await ReadBlockAsync(archive, archiveStream, block, encryptionKey, cancellationToken).ConfigureAwait(false);
-                        if (!readBlock.Success)
+                        using (var fs = new FileStream(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                         {
-                            return TestArchiveResult.Failed(readBlock.ErrorMessage!);
+                            if (LpcSfxHelper.IsSfxStream(fs))
+                            {
+                                fs.Position = fs.Length - LpcSfxHelper.FooterSize;
+                                var buffer = new byte[8];
+                                fs.ReadExactly(buffer);
+                                sfxOffset = BitConverter.ToInt64(buffer);
+                            }
                         }
-
-                        var decompressed = readBlock.Data!;
-                        hash.AppendData(decompressed);
-                        processedBytes += decompressed.Length;
-                        progress?.Report(new ArchiveOperationProgress
-                        {
-                            CurrentItem = file.RelativePath,
-                            ProcessedBytes = processedBytes,
-                            TotalBytes = totalBytes,
-                            Percent = totalBytes == 0 ? 100 : (double)processedBytes / totalBytes * 100d
-                        });
+                        archiveHandle = File.OpenHandle(archivePath, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.Asynchronous);
+                        useRandomAccess = true;
                     }
-
-                    if (file.ChecksumType == ChecksumType.Sha256)
+                    catch
                     {
-                        var fileHash = hash.GetHashAndReset();
-                        if (!fileHash.SequenceEqual(file.FileChecksum))
-                        {
-                            return TestArchiveResult.Failed($"SHA-256 mismatch for file {file.RelativePath}.");
-                        }
+                        archiveHandle?.Dispose();
+                        archiveHandle = null;
+                        useRandomAccess = false;
                     }
+                }
+
+                try
+                {
+                    var tasks = files.Select(async file =>
+                    {
+                        await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+                        try
+                        {
+                            if (Volatile.Read(ref firstErrorMessage) is not null)
+                            {
+                                return;
+                            }
+
+                            cancellationToken.ThrowIfCancellationRequested();
+                            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+                            if (!blocksByFileId.TryGetValue(file.EntryId, out var fileBlocks))
+                            {
+                                fileBlocks = [];
+                            }
+
+                            Stream? localArchiveStream = null;
+                            if (!useRandomAccess || archiveHandle is null)
+                            {
+                                localArchiveStream = LpcSfxHelper.OpenArchiveStream(archivePath);
+                            }
+
+                            try
+                            {
+                                foreach (var block in fileBlocks)
+                                {
+                                    cancellationToken.ThrowIfCancellationRequested();
+                                    BlockReadResult readBlock;
+                                    if (useRandomAccess && archiveHandle is not null)
+                                    {
+                                        readBlock = await ReadBlockAsync(archive, archiveHandle, sfxOffset, block, encryptionKey, cancellationToken).ConfigureAwait(false);
+                                    }
+                                    else
+                                    {
+                                        readBlock = await ReadBlockAsync(archive, localArchiveStream!, block, encryptionKey, cancellationToken).ConfigureAwait(false);
+                                    }
+
+                                    if (!readBlock.Success)
+                                    {
+                                        lock (errorLock)
+                                        {
+                                            firstErrorMessage ??= readBlock.ErrorMessage;
+                                        }
+                                        return;
+                                    }
+
+                                    var decompressed = readBlock.Data!;
+                                    hash.AppendData(decompressed);
+                                    
+                                    var currentProcessed = Interlocked.Add(ref processedBytes, decompressed.Length);
+                                    lock (progressLock)
+                                    {
+                                        progress?.Report(new ArchiveOperationProgress
+                                        {
+                                            CurrentItem = file.RelativePath,
+                                            ProcessedBytes = currentProcessed,
+                                            TotalBytes = totalBytes,
+                                            Percent = totalBytes == 0 ? 100 : (double)currentProcessed / totalBytes * 100d
+                                        });
+                                    }
+                                }
+
+                                if (file.ChecksumType == ChecksumType.Sha256)
+                                {
+                                    var fileHash = hash.GetHashAndReset();
+                                    if (!fileHash.SequenceEqual(file.FileChecksum))
+                                    {
+                                        lock (errorLock)
+                                        {
+                                            firstErrorMessage ??= $"SHA-256 mismatch for file {file.RelativePath}.";
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                if (localArchiveStream is not null)
+                                {
+                                    await localArchiveStream.DisposeAsync().ConfigureAwait(false);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            lock (errorLock)
+                            {
+                                firstErrorMessage ??= ex.Message;
+                            }
+                        }
+                        finally
+                        {
+                            sem.Release();
+                        }
+                    });
+
+                    await Task.WhenAll(tasks).ConfigureAwait(false);
+
+                    if (firstErrorMessage is not null)
+                    {
+                        return TestArchiveResult.Failed(firstErrorMessage);
+                    }
+                }
+                finally
+                {
+                    archiveHandle?.Dispose();
                 }
             }
 
@@ -267,16 +375,44 @@ public sealed class ArchiveTester
             return BlockReadResult.Fail($"Unexpected EOF at block #{block.BlockId}.");
         }
 
+        return DecompressAndDecryptBlockPayloadForTest(compressedBytes, block, archive, encryptionKey);
+    }
+
+    private async Task<BlockReadResult> ReadBlockAsync(
+        ArchiveDocument archive,
+        Microsoft.Win32.SafeHandles.SafeFileHandle handle,
+        long sfxOffset,
+        BlockEntryRecord block,
+        byte[] encryptionKey,
+        CancellationToken cancellationToken)
+    {
+        var compressedBytes = new byte[block.CompressedBlockSize];
+        var read = await RandomAccess.ReadAsync(handle, compressedBytes.AsMemory(), sfxOffset + block.DataOffset, cancellationToken).ConfigureAwait(false);
+        if (read != compressedBytes.Length)
+        {
+            return BlockReadResult.Fail($"Unexpected EOF at block #{block.BlockId}.");
+        }
+
+        return DecompressAndDecryptBlockPayloadForTest(compressedBytes, block, archive, encryptionKey);
+    }
+
+    private BlockReadResult DecompressAndDecryptBlockPayloadForTest(
+        byte[] compressedBytes,
+        BlockEntryRecord block,
+        ArchiveDocument archive,
+        byte[] encryptionKey)
+    {
         if (ChecksumService.ComputeCrc32C(compressedBytes) != block.BlockChecksumCrc32C)
         {
             return BlockReadResult.Fail($"CRC32C mismatch at block #{block.BlockId}.");
         }
 
+        byte[] payload = compressedBytes;
         if (archive.Header.IsEncrypted)
         {
             try
             {
-                compressedBytes = ArchiveEncryption.DecryptBlock(compressedBytes, encryptionKey, block);
+                payload = ArchiveEncryption.DecryptBlock(compressedBytes, encryptionKey, block);
             }
             catch (CryptographicException)
             {
@@ -287,16 +423,28 @@ public sealed class ArchiveTester
         byte[] decompressed;
         if (block.CompressionMethod == CompressionMethod.Raw || block.IsRaw)
         {
-            decompressed = compressedBytes;
+            decompressed = payload;
         }
         else
         {
-            decompressed = _compressorRegistry.GetCompressor(block.CompressionMethod).Decompress(compressedBytes, block.OriginalBlockSize);
+            try
+            {
+                decompressed = _compressorRegistry.GetCompressor(block.CompressionMethod).Decompress(payload, block.OriginalBlockSize);
+            }
+            catch (Exception ex)
+            {
+                return BlockReadResult.Fail($"Decompression failed at block #{block.BlockId}: {ex.Message}");
+            }
         }
 
         if (decompressed.Length != block.OriginalBlockSize)
         {
             return BlockReadResult.Fail($"Unexpected decompressed size at block #{block.BlockId}.");
+        }
+
+        if ((block.Flags & 2u) != 0)
+        {
+            BcjFilter.DecodeX86(decompressed);
         }
 
         return BlockReadResult.Ok(decompressed);

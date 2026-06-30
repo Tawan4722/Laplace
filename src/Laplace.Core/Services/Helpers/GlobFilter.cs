@@ -115,14 +115,28 @@ internal static class GlobFilter
             }
         }
 
+        var survivingDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in survivingFiles)
+        {
+            var idx = file.LastIndexOf('/');
+            while (idx > 0)
+            {
+                var dir = file[..idx];
+                if (!survivingDirs.Add(dir))
+                {
+                    break;
+                }
+                idx = dir.LastIndexOf('/');
+            }
+        }
+
         var result = new List<InputEntry>();
         foreach (var entry in entries)
         {
             var normalizedPath = entry.RelativePath.Replace('\\', '/');
             if (entry.IsDirectory)
             {
-                var dirPrefix = normalizedPath.TrimEnd('/') + "/";
-                if (survivingFiles.Any(f => f.StartsWith(dirPrefix, StringComparison.OrdinalIgnoreCase)))
+                if (survivingDirs.Contains(normalizedPath.TrimEnd('/')))
                 {
                     result.Add(entry);
                 }

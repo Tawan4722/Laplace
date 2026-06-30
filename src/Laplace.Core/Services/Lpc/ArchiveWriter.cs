@@ -346,27 +346,11 @@ public sealed class ArchiveWriter
             }
             else
             {
-                var compressor = _compressorRegistry.GetCompressor(prepared.Method);
-                block = new BlockEntryRecord
-                {
-                    BlockId = blockEntries.Count,
-                    OwningFileEntryId = fileEntry.EntryId,
-                    OriginalBlockSize = prepared.OriginalBlockSize,
-                    CompressedBlockSize = prepared.CompressedBytes.Length,
-                    CompressionMethod = prepared.Method,
-                    CompressionLevel = compressor.Level,
-                    Flags = (prepared.IsRaw ? 1u : 0u) | (prepared.IsBcj ? 2u : 0u),
-                    IsRaw = prepared.IsRaw
-                };
+                block = prepared.Block;
+                block.BlockId = blockEntries.Count;
+                block.DataOffset = archiveStream.Position;
 
                 var outputBytes = prepared.CompressedBytes;
-                if (header.IsEncrypted)
-                {
-                    outputBytes = ArchiveEncryption.EncryptBlock(outputBytes, encryptionKey, block);
-                }
-
-                block.DataOffset = archiveStream.Position;
-                block.BlockChecksumCrc32C = ChecksumService.ComputeCrc32C(outputBytes);
                 await archiveStream.WriteAsync(outputBytes, cancellationToken).ConfigureAwait(false);
                 blockEntries.Add(block);
 
@@ -465,9 +449,22 @@ public sealed class ArchiveWriter
                         blockHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(blockData.AsSpan(0, bytesRead)));
                     }
 
+                    var blockId = blockEntries.Count + pendingBlocks.Count;
                     if (options.Deduplicate && blockHash is not null && writtenBlocks.TryGetValue(blockHash, out var existingBlock))
                     {
-                        var prepared = new PreparedIndependentBlock(fileEntry, bytesRead, CompressionMethod.Raw, [], true)
+                        var compressor = _compressorRegistry.GetCompressor(CompressionMethod.Raw);
+                        var block = new BlockEntryRecord
+                        {
+                            BlockId = blockId,
+                            OwningFileEntryId = fileEntry.EntryId,
+                            OriginalBlockSize = bytesRead,
+                            CompressedBlockSize = existingBlock.CompressedBlockSize,
+                            CompressionMethod = existingBlock.CompressionMethod,
+                            CompressionLevel = compressor.Level,
+                            Flags = existingBlock.Flags,
+                            IsRaw = existingBlock.IsRaw
+                        };
+                        var prepared = new PreparedIndependentBlock(fileEntry, bytesRead, CompressionMethod.Raw, [], true, block)
                         {
                             OriginalSha256 = blockHash,
                             IsDuplicate = true,
@@ -486,7 +483,27 @@ public sealed class ArchiveWriter
                             try
                             {
                                 var (outputMethod, outputBytes, isRaw, isBcj) = SelectAndCompressBlock(relativePath, options, blockData, bytesRead);
-                                var prepared = new PreparedIndependentBlock(fileEntry, bytesRead, outputMethod, outputBytes, isRaw)
+                                var compressor = _compressorRegistry.GetCompressor(outputMethod);
+                                var block = new BlockEntryRecord
+                                {
+                                    BlockId = blockId,
+                                    OwningFileEntryId = fileEntry.EntryId,
+                                    OriginalBlockSize = bytesRead,
+                                    CompressedBlockSize = outputBytes.Length,
+                                    CompressionMethod = outputMethod,
+                                    CompressionLevel = compressor.Level,
+                                    Flags = (isRaw ? 1u : 0u) | (isBcj ? 2u : 0u),
+                                    IsRaw = isRaw
+                                };
+
+                                if (header.IsEncrypted)
+                                {
+                                    outputBytes = ArchiveEncryption.EncryptBlock(outputBytes, encryptionKey, block);
+                                }
+
+                                block.BlockChecksumCrc32C = ChecksumService.ComputeCrc32C(outputBytes);
+
+                                var prepared = new PreparedIndependentBlock(fileEntry, bytesRead, outputMethod, outputBytes, isRaw, block)
                                 {
                                     OriginalSha256 = blockHash,
                                     IsBcj = isBcj
@@ -517,7 +534,27 @@ public sealed class ArchiveWriter
                                 try
                                 {
                                     var (outputMethod, outputBytes, isRaw, isBcj) = SelectAndCompressBlock(relativePath, options, dataToCompress, lengthToCompress);
-                                    return new PreparedIndependentBlock(fileEntry, lengthToCompress, outputMethod, outputBytes, isRaw)
+                                    var compressor = _compressorRegistry.GetCompressor(outputMethod);
+                                    var block = new BlockEntryRecord
+                                    {
+                                        BlockId = blockId,
+                                        OwningFileEntryId = fileEntry.EntryId,
+                                        OriginalBlockSize = lengthToCompress,
+                                        CompressedBlockSize = outputBytes.Length,
+                                        CompressionMethod = outputMethod,
+                                        CompressionLevel = compressor.Level,
+                                        Flags = (isRaw ? 1u : 0u) | (isBcj ? 2u : 0u),
+                                        IsRaw = isRaw
+                                    };
+
+                                    if (header.IsEncrypted)
+                                    {
+                                        outputBytes = ArchiveEncryption.EncryptBlock(outputBytes, encryptionKey, block);
+                                    }
+
+                                    block.BlockChecksumCrc32C = ChecksumService.ComputeCrc32C(outputBytes);
+
+                                    return new PreparedIndependentBlock(fileEntry, lengthToCompress, outputMethod, outputBytes, isRaw, block)
                                     {
                                         OriginalSha256 = currentHash,
                                         IsBcj = isBcj
@@ -659,9 +696,7 @@ public sealed class ArchiveWriter
                         if (maxPendingBlocks == 1)
                         {
                             await WritePreparedSolidBlockAsync(
-                                PrepareSolidBlock(blockId, hintPath, options, solidBuffer, solidBufferLength, streamOffset),
-                                header,
-                                encryptionKey,
+                                PrepareSolidBlock(blockId, hintPath, options, solidBuffer, solidBufferLength, streamOffset, header, encryptionKey),
                                 archiveStream,
                                 blockEntries,
                                 cancellationToken).ConfigureAwait(false);
@@ -679,7 +714,7 @@ public sealed class ArchiveWriter
                             pendingBlocks.Enqueue(Task.Run(
                                 () => {
                                     try {
-                                        return PrepareSolidBlock(blockId, hintPath, options, blockData, lengthToCompress, streamOffset);
+                                        return PrepareSolidBlock(blockId, hintPath, options, blockData, lengthToCompress, streamOffset, header, encryptionKey);
                                     } finally {
                                         System.Buffers.ArrayPool<byte>.Shared.Return(rentedToReturn);
                                     }
@@ -689,8 +724,6 @@ public sealed class ArchiveWriter
                             {
                                 await WritePreparedSolidBlockAsync(
                                     await pendingBlocks.Dequeue().ConfigureAwait(false),
-                                    header,
-                                    encryptionKey,
                                     archiveStream,
                                     blockEntries,
                                     cancellationToken).ConfigureAwait(false);
@@ -722,9 +755,7 @@ public sealed class ArchiveWriter
             if (maxPendingBlocks == 1)
             {
                 await WritePreparedSolidBlockAsync(
-                    PrepareSolidBlock(blockId, hintPath, options, solidBuffer, solidBufferLength, streamOffset),
-                    header,
-                    encryptionKey,
+                    PrepareSolidBlock(blockId, hintPath, options, solidBuffer, solidBufferLength, streamOffset, header, encryptionKey),
                     archiveStream,
                     blockEntries,
                     cancellationToken).ConfigureAwait(false);
@@ -738,7 +769,7 @@ public sealed class ArchiveWriter
                 pendingBlocks.Enqueue(Task.Run(
                     () => {
                         try {
-                            return PrepareSolidBlock(blockId, hintPath, options, blockData, lengthToCompress, streamOffset);
+                            return PrepareSolidBlock(blockId, hintPath, options, blockData, lengthToCompress, streamOffset, header, encryptionKey);
                         } finally {
                             System.Buffers.ArrayPool<byte>.Shared.Return(rentedToReturn);
                         }
@@ -751,8 +782,6 @@ public sealed class ArchiveWriter
         {
             await WritePreparedSolidBlockAsync(
                 await pendingBlocks.Dequeue().ConfigureAwait(false),
-                header,
-                encryptionKey,
                 archiveStream,
                 blockEntries,
                 cancellationToken).ConfigureAwait(false);
@@ -773,31 +802,38 @@ public sealed class ArchiveWriter
         CreateArchiveOptions options,
         byte[] blockData,
         int blockLength,
-        long originalStreamOffset)
+        long originalStreamOffset,
+        ArchiveHeader header,
+        byte[] encryptionKey)
     {
         var (outputMethod, outputBytes, isRaw, isBcj) = SelectAndCompressBlock(blockHintPath, options, blockData, blockLength);
         var compressor = GetCompressorForCompression(outputMethod, options);
         var flags = (isRaw ? 1u : 0u) | (isBcj ? 2u : 0u);
-        return new PreparedSolidBlock(
-            new BlockEntryRecord
-            {
-                BlockId = blockId,
-                OwningFileEntryId = -1,
-                OriginalBlockSize = blockLength,
-                CompressedBlockSize = outputBytes.Length,
-                CompressionMethod = outputMethod,
-                CompressionLevel = compressor.Level,
-                OriginalStreamOffset = originalStreamOffset,
-                Flags = flags,
-                IsRaw = isRaw
-            },
-            outputBytes);
+        var block = new BlockEntryRecord
+        {
+            BlockId = blockId,
+            OwningFileEntryId = -1,
+            OriginalBlockSize = blockLength,
+            CompressedBlockSize = outputBytes.Length,
+            CompressionMethod = outputMethod,
+            CompressionLevel = compressor.Level,
+            OriginalStreamOffset = originalStreamOffset,
+            Flags = flags,
+            IsRaw = isRaw
+        };
+
+        if (header.IsEncrypted)
+        {
+            outputBytes = ArchiveEncryption.EncryptBlock(outputBytes, encryptionKey, block);
+        }
+
+        block.BlockChecksumCrc32C = ChecksumService.ComputeCrc32C(outputBytes);
+
+        return new PreparedSolidBlock(block, outputBytes);
     }
 
     private static async Task WritePreparedSolidBlockAsync(
         PreparedSolidBlock prepared,
-        ArchiveHeader header,
-        byte[] encryptionKey,
         Stream archiveStream,
         List<BlockEntryRecord> blockEntries,
         CancellationToken cancellationToken)
@@ -805,13 +841,7 @@ public sealed class ArchiveWriter
         var block = prepared.Block;
         var outputBytes = prepared.Bytes;
 
-        if (header.IsEncrypted)
-        {
-            outputBytes = ArchiveEncryption.EncryptBlock(outputBytes, encryptionKey, block);
-        }
-
         block.DataOffset = archiveStream.Position;
-        block.BlockChecksumCrc32C = ChecksumService.ComputeCrc32C(outputBytes);
         await archiveStream.WriteAsync(outputBytes, cancellationToken).ConfigureAwait(false);
         blockEntries.Add(block);
     }
@@ -1187,24 +1217,28 @@ public sealed class ArchiveWriter
             int originalBlockSize,
             CompressionMethod method,
             byte[] compressedBytes,
-            bool isRaw)
+            bool isRaw,
+            BlockEntryRecord block)
         {
             FileEntry = fileEntry;
             OriginalBlockSize = originalBlockSize;
             Method = method;
             CompressedBytes = compressedBytes;
             IsRaw = isRaw;
+            Block = block;
         }
 
         public FileEntryRecord FileEntry { get; }
         public int OriginalBlockSize { get; }
         public CompressionMethod Method { get; }
-        public byte[] CompressedBytes { get; }
+        public byte[] CompressedBytes { get; set; }
         public bool IsRaw { get; }
         public bool IsBcj { get; set; }
         
         public string? OriginalSha256 { get; set; }
         public bool IsDuplicate { get; set; }
         public string? DuplicateOfHash { get; set; }
+
+        public BlockEntryRecord Block { get; }
     }
 }
